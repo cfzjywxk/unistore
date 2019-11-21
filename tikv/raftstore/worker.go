@@ -862,6 +862,7 @@ func (r *regionRunner) run(t task) {
 		// To make sure applying snapshots in order.
 		r.pendingApplies = append(r.pendingApplies, t)
 		r.handlePendingApplies()
+		r.pendingApplies = r.pendingApplies[:0]
 	case taskTypeRegionDestroy:
 		// Try to delay the range deletion because
 		// there might be a coprocessor request related to this range
