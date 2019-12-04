@@ -2,6 +2,7 @@ package dbreader
 
 import (
 	"bytes"
+	"github.com/ngaut/log"
 	"math"
 
 	"github.com/coocood/badger"
@@ -24,12 +25,8 @@ func NewDBReader(startKey, endKey []byte, txn *badger.Txn, safePoint uint64) *DB
 func NewIterator(txn *badger.Txn, reverse bool, startKey, endKey []byte) *badger.Iterator {
 	opts := badger.DefaultIteratorOptions
 	opts.Reverse = reverse
-	if len(startKey) > 0 {
-		opts.StartKey = y.KeyWithTs(startKey, math.MaxUint64)
-	}
-	if len(endKey) > 0 {
-		opts.EndKey = y.KeyWithTs(endKey, math.MaxUint64)
-	}
+	opts.StartKey = y.KeyWithTs(startKey, math.MaxUint64)
+	opts.EndKey = y.KeyWithTs(endKey, math.MaxUint64)
 	return txn.NewIterator(opts)
 }
 
@@ -44,14 +41,14 @@ type DBReader struct {
 	safePoint uint64
 }
 
-// GetMvccInfoByKey fills MvccInfo reading committed keys from db
+// GetMvccInfoByKey fills MvccInfo reading committed keys from db, input key should be rawKey
 func (r *DBReader) GetMvccInfoByKey(key []byte, isRowKey bool, mvccInfo *kvrpcpb.MvccInfo) error {
 	err := r.getKeyWithMeta(key, isRowKey, uint64(math.MaxUint64), mvccInfo)
 	if err != nil {
 		return err
 	}
 	if len(mvccInfo.Writes) > 0 {
-		err = r.getOldKeysWithMeta(key, mvccInfo.Writes[0].CommitTs, isRowKey, mvccInfo)
+		err = r.GetOldKeysWithMeta(key, mvccInfo.Writes[0].CommitTs, isRowKey, mvccInfo)
 		if err != nil {
 			return err
 		}
@@ -93,16 +90,17 @@ func (r *DBReader) getKeyWithMeta(key []byte, isRowKey bool, startTs uint64, mvc
 			ShortValue: val,
 		}
 		mvccInfo.Writes = append(mvccInfo.Writes, curRecord)
+		log.Infof("[for debug] append one in getKeyWithMeta")
 	}
 	return nil
 }
 
-// getOldKeysWithMeta will try to fill mvccInfo with all the historical committed records
-func (r *DBReader) getOldKeysWithMeta(key []byte, startTs uint64, isRowKey bool, mvccInfo *kvrpcpb.MvccInfo) error {
+// GetOldKeysWithMeta will try to fill mvccInfo with all the historical committed records
+func (r *DBReader) GetOldKeysWithMeta(key []byte, startTs uint64, isRowKey bool, mvccInfo *kvrpcpb.MvccInfo) error {
 	oldKey := mvcc.EncodeOldKey(key, startTs)
-	iter := r.GetIter()
-	for iter.Seek(oldKey); iter.ValidForPrefix(oldKey[:len(oldKey)-8]); iter.Next() {
-		item := iter.Item()
+	oldIter := r.GetOldIter()
+	for oldIter.Seek(oldKey); oldIter.ValidForPrefix(oldKey[:len(oldKey)-8]); oldIter.Next() {
+		item := oldIter.Item()
 		oldUsrMeta := mvcc.OldUserMeta(item.UserMeta())
 		commitTs, err := mvcc.DecodeOldKeyCommitTs(item.Key())
 		if err != nil {
@@ -131,6 +129,7 @@ func (r *DBReader) getOldKeysWithMeta(key []byte, startTs uint64, isRowKey bool,
 			ShortValue: val,
 		}
 		mvccInfo.Writes = append(mvccInfo.Writes, curRecord)
+		log.Infof("[for debug] append one in GetOldKeysWithMeta")
 	}
 
 	return nil
@@ -152,12 +151,12 @@ func (r *DBReader) Get(key []byte, startTS uint64) ([]byte, error) {
 
 func (r *DBReader) getOld(key []byte, startTS uint64) ([]byte, error) {
 	oldKey := mvcc.EncodeOldKey(key, startTS)
-	iter := r.GetIter()
-	iter.Seek(oldKey)
-	if !iter.ValidForPrefix(oldKey[:len(oldKey)-8]) {
+	oldIter := r.GetIter()
+	oldIter.Seek(oldKey)
+	if !oldIter.ValidForPrefix(oldKey[:len(oldKey)-8]) {
 		return nil, nil
 	}
-	item := iter.Item()
+	item := oldIter.Item()
 	nextCommitTs := mvcc.OldUserMeta(item.UserMeta()).NextCommitTS()
 	if nextCommitTs < r.safePoint {
 		// This entry is eligible for GC. Normally we will not see this version.

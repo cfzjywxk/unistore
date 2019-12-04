@@ -905,6 +905,7 @@ func (store *MVCCStore) StartDeadlockDetection(ctx context.Context, pdClient pd.
 	return nil
 }
 
+// MvccGetByKey gets mvcc information using input key as rawKey
 func (store *MVCCStore) MvccGetByKey(reqCtx *requestCtx, key []byte) (*kvrpcpb.MvccInfo, error) {
 	mvccInfo := &kvrpcpb.MvccInfo{}
 	lock := store.getLock(reqCtx, key)
@@ -937,6 +938,61 @@ func (store *MVCCStore) MvccGetByKey(reqCtx *requestCtx, key []byte) (*kvrpcpb.M
 		mvccInfo.Writes = append(mvccInfo.Writes, curRecord)
 	}
 	return mvccInfo, nil
+}
+
+func (store *MVCCStore) MvccGetByStartTs(reqCtx *requestCtx, startTs uint64) (*kvrpcpb.MvccInfo, []byte, error) {
+	reader := reqCtx.getDBReader()
+	iter := reader.GetIter()
+	var item *badger.Item
+	log.Infof("[for debug] starTs=%v", startTs)
+	for ; iter.Valid(); iter.Next() {
+		log.Infof("[for debug] ???starTs=%v", startTs)
+		newItem := iter.Item()
+		if len(newItem.UserMeta()) > 0 {
+			usrMeta := mvcc.DBUserMeta(newItem.UserMeta())
+			log.Infof("[for debug] meta=%v", usrMeta)
+			if usrMeta.StartTS() == startTs {
+				item = newItem
+				break
+			}
+		}
+	}
+	if item != nil {
+		rawKey := item.Key()
+		res, err := store.MvccGetByKey(reqCtx, rawKey)
+		if err != nil {
+			return nil, nil, err
+		}
+		return res, rawKey, nil
+	}
+	// if item not found using iter, try oldIter
+	oldIter := reader.GetOldIter()
+	for oldIter.Valid() {
+		oldItem := oldIter.Item()
+		if len(oldItem.UserMeta()) > 0 {
+			oldMeta := mvcc.OldUserMeta(oldItem.UserMeta())
+			if oldMeta.StartTS() == startTs {
+				item = oldItem
+				break
+			}
+		}
+		oldIter.Next()
+	}
+	if item != nil {
+		oldKey := item.Key()
+		rawkey, commitTs, err := mvcc.DecodeOldKey(oldKey)
+		if err != nil {
+			return nil, nil, err
+		}
+		isRowKey := rowcodec.IsRowKey(rawkey)
+		mvccInfo := &kvrpcpb.MvccInfo{}
+		err = reader.GetOldKeysWithMeta(rawkey, commitTs, isRowKey, mvccInfo)
+		if err != nil {
+			return nil, nil, err
+		}
+		return mvccInfo, rawkey, nil
+	}
+	return nil, nil, nil
 }
 
 type SafePoint struct {
