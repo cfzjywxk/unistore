@@ -13,7 +13,7 @@ var defaultEndian = binary.LittleEndian
 // DBUserMeta is the user meta used in DB.
 type DBUserMeta []byte
 
-const dbUserMetaLen = 16
+const dbUserMetaLen = 17
 
 // DecodeLock decodes data to lock, the primary and value is copied.
 func DecodeLock(data []byte) (l MvccLock) {
@@ -102,12 +102,34 @@ var (
 	LockUserMetaRollbackGC = []byte{LockUserMetaRollbackGCByte}
 )
 
+// UserMeta oldKey flag
+const (
+	CurrentKey = 0
+	OldKey = 1
+)
+const KeyTypePos = 16
+
 // EncodeOldKey encodes a latest key to an old key.
 func EncodeOldKey(key []byte, ts uint64) []byte {
 	b := append([]byte{}, key...)
 	ret := codec.EncodeUintDesc(b, ts)
 	ret[0]++
 	return ret
+}
+
+//
+func DecodeOldKey(oldKey []byte) ([]byte, uint64, error) {
+	if len(oldKey) < 8 {
+		return nil, 0, errors.Errorf("invalid input key=%v length=%d less than 8 bytes", oldKey, len(oldKey))
+	}
+	buf := append([]byte{}, oldKey...)
+	buf[0]--
+	rawKey := buf[:len(buf)-8]
+	_, res, err := codec.DecodeUintDesc(buf[len(buf)-8:])
+	if err != nil {
+		return nil, 0, err
+	}
+	return rawKey, res, nil
 }
 
 // DecodeOldKeyCommitTs decodes commitTs from encoded old key
@@ -141,9 +163,10 @@ func DecodeRollbackTS(buf []byte) uint64 {
 
 // NewDBUserMeta creates a new DBUserMeta.
 func NewDBUserMeta(startTS, commitTS uint64) DBUserMeta {
-	m := make(DBUserMeta, 16)
+	m := make(DBUserMeta, dbUserMetaLen)
 	defaultEndian.PutUint64(m, startTS)
 	defaultEndian.PutUint64(m[8:], commitTS)
+	m[KeyTypePos] = CurrentKey
 	return m
 }
 
@@ -163,6 +186,7 @@ func (m DBUserMeta) StartTS() uint64 {
 func (m DBUserMeta) ToOldUserMeta(nextCommitTS uint64) OldUserMeta {
 	o := OldUserMeta(m)
 	defaultEndian.PutUint64(o[8:], nextCommitTS)
+	o[KeyTypePos] = OldKey
 	return o
 }
 
@@ -176,4 +200,12 @@ func (m OldUserMeta) StartTS() uint64 {
 // NextCommitTS reads the next commitTS from the OldUserMeta.
 func (m OldUserMeta) NextCommitTS() uint64 {
 	return defaultEndian.Uint64(m[8:])
+}
+
+// IsOldKey returns current key type, true if it's old key
+func IsOldKey(key []byte) bool {
+	if len(key) < dbUserMetaLen {
+		return false
+	}
+	return key[KeyTypePos] == OldKey
 }

@@ -905,6 +905,7 @@ func (store *MVCCStore) StartDeadlockDetection(ctx context.Context, pdClient pd.
 	return nil
 }
 
+// MvccGetByKey gets mvcc information using input key as rawKey
 func (store *MVCCStore) MvccGetByKey(reqCtx *requestCtx, key []byte) (*kvrpcpb.MvccInfo, error) {
 	mvccInfo := &kvrpcpb.MvccInfo{}
 	lock := store.getLock(reqCtx, key)
@@ -924,9 +925,18 @@ func (store *MVCCStore) MvccGetByKey(reqCtx *requestCtx, key []byte) (*kvrpcpb.M
 		return nil, err
 	}
 	// Get rollback writes from rollback store
+	err = store.getRollbackMvcc(key, uint64(math.MaxUint64), reqCtx, mvccInfo)
+	if err != nil {
+		return nil, err
+	}
+	return mvccInfo, nil
+}
+
+func (store *MVCCStore) getRollbackMvcc(rawkey []byte, ts uint64,
+	reqCtx *requestCtx, mvccInfo *kvrpcpb.MvccInfo) error {
 	it := store.rollbackStore.NewIterator()
-	rbStartKey := mvcc.EncodeRollbackKey(reqCtx.buf, key, uint64(math.MaxUint64))
-	for it.Seek(rbStartKey); it.Valid() && bytes.HasPrefix(it.Key(), key); it.Next() {
+	rbStartKey := mvcc.EncodeRollbackKey(reqCtx.buf, rawkey, ts)
+	for it.Seek(rbStartKey); it.Valid() && bytes.HasPrefix(it.Key(), rawkey); it.Next() {
 		rollbackTs := mvcc.DecodeRollbackTS(it.Key())
 		curRecord := &kvrpcpb.MvccWrite{
 			Type:       kvrpcpb.Op_Rollback,
@@ -936,7 +946,65 @@ func (store *MVCCStore) MvccGetByKey(reqCtx *requestCtx, key []byte) (*kvrpcpb.M
 		}
 		mvccInfo.Writes = append(mvccInfo.Writes, curRecord)
 	}
-	return mvccInfo, nil
+	return nil
+}
+
+func (store *MVCCStore) MvccGetByStartTs(reqCtx *requestCtx, startTs uint64) (*kvrpcpb.MvccInfo, []byte, error) {
+	reader := reqCtx.getDBReader()
+	iter := reader.GetIter()
+	var item *badger.Item
+	for iter.Rewind(); iter.Valid(); iter.Next() {
+		newItem := iter.Item()
+		if len(newItem.UserMeta()) > 0 {
+			usrMeta := mvcc.DBUserMeta(newItem.UserMeta())
+			log.Infof("[for debug] cur key=%v", newItem.Key())
+			if usrMeta.StartTS() == startTs {
+				item = newItem
+				break
+			}
+		}
+	}
+	if item != nil {
+		rawKey := item.Key()
+		res, err := store.MvccGetByKey(reqCtx, rawKey)
+		if err != nil {
+			return nil, nil, err
+		}
+		log.Infof("[for debug] return current rawKey=%v", rawKey)
+		return res, rawKey, nil
+	}
+	// if item not found using iter, try oldIter
+	oldIter := reader.GetOldIter()
+	for oldIter.Rewind(); oldIter.Valid(); oldIter.Next() {
+		oldItem := oldIter.Item()
+		if len(oldItem.UserMeta()) > 0 {
+			oldMeta := mvcc.OldUserMeta(oldItem.UserMeta())
+			if oldMeta.StartTS() == startTs {
+				item = oldItem
+				break
+			}
+		}
+	}
+	if item != nil {
+		oldKey := item.Key()
+		rawkey, _, err := mvcc.DecodeOldKey(oldKey)
+		if err != nil {
+			return nil, nil, err
+		}
+		isRowKey := rowcodec.IsRowKey(rawkey)
+		mvccInfo := &kvrpcpb.MvccInfo{}
+		err = reader.GetMvccInfoByOldKey(oldKey, isRowKey, mvccInfo)
+		if err != nil {
+			return nil, nil, err
+		}
+		// Get rollback writes from rollback store
+		err = store.getRollbackMvcc(rawkey, startTs, reqCtx, mvccInfo)
+		if err != nil {
+			return nil, nil, err
+		}
+		return mvccInfo, rawkey, nil
+	}
+	return nil, nil, nil
 }
 
 type SafePoint struct {

@@ -3,6 +3,7 @@ package tikv
 import (
 	"bytes"
 	"fmt"
+	"github.com/ngaut/log"
 	"io/ioutil"
 	"os"
 	"sync"
@@ -476,9 +477,20 @@ func (s *testMvccSuite) TestCheckTxnStatus(c *C) {
 	c.Assert(action, Equals, kvrpcpb.Action_NoAction)
 }
 
-func (s *testMvccSuite) TestMvccGetByKey(c *C) {
+func (s *testMvccSuite) TestDecodeOldKey(c *C) {
+	rawKey := []byte("rawKey")
+	oldCommitTs := uint64(1)
+	oldKey := mvcc.EncodeOldKey(rawKey, oldCommitTs)
+
+	resKey, resTs, err := mvcc.DecodeOldKey(oldKey)
+	c.Assert(err, IsNil)
+	c.Assert(bytes.Compare(resKey, rawKey), Equals, 0)
+	c.Assert(resTs, Equals, oldCommitTs)
+}
+
+func (s *testMvccSuite) TestMvccGet(c *C) {
 	var err error
-	store, err := NewTestStore("TestMvccGetByKey", "TestMvccGetByKey")
+	store, err := NewTestStore("TestMvccGetBy", "TestMvccGetBy")
 	c.Assert(err, IsNil)
 	defer CleanTestStore(store)
 
@@ -544,4 +556,45 @@ func (s *testMvccSuite) TestMvccGetByKey(c *C) {
 	c.Assert(res.Writes[3].StartTs, Equals, startTs3)
 	c.Assert(res.Writes[3].CommitTs, Equals, startTs3)
 	c.Assert(bytes.Compare(res.Writes[3].ShortValue, []byte{0}), Equals, 0)
+
+	// read using MvccGetByStartTs using key current ts
+	log.Infof("[for debug] =================================================")
+	reqCtx.reader = nil
+	res2, resKey, err := store.MvccStore.MvccGetByStartTs(reqCtx, startTs4)
+	c.Assert(err, IsNil)
+	c.Assert(res2, NotNil)
+	c.Assert(bytes.Compare(resKey, pk), Equals, 0)
+	c.Assert(len(res2.Writes), Equals, 4)
+	c.Assert(res2.Writes[2].StartTs, Equals, startTs1)
+	c.Assert(res2.Writes[2].CommitTs, Equals, commitTs1)
+	c.Assert(bytes.Compare(res2.Writes[2].ShortValue, pkVal), Equals, 0)
+
+	c.Assert(res2.Writes[1].StartTs, Equals, startTs2)
+	c.Assert(res2.Writes[1].CommitTs, Equals, commitTs2)
+	c.Assert(bytes.Compare(res2.Writes[1].ShortValue, newVal), Equals, 0)
+
+	c.Assert(res2.Writes[0].StartTs, Equals, startTs4)
+	c.Assert(res2.Writes[0].CommitTs, Equals, commitTs4)
+	c.Assert(bytes.Compare(res2.Writes[0].ShortValue, emptyVal), Equals, 0)
+
+	c.Assert(res2.Writes[3].StartTs, Equals, startTs3)
+	c.Assert(res2.Writes[3].CommitTs, Equals, startTs3)
+	c.Assert(bytes.Compare(res2.Writes[3].ShortValue, []byte{0}), Equals, 0)
+
+	// read using MvccGetByStartTs using non exists startTs
+	startTsNonExists := uint64(1000)
+	reqCtx.reader = nil
+	res3, resKey, err := store.MvccStore.MvccGetByStartTs(reqCtx, startTsNonExists)
+	c.Assert(err, IsNil)
+	c.Assert(resKey, IsNil)
+	c.Assert(res3, IsNil)
+
+	// read using old startTs
+	log.Infof("[for debug] ********************************************")
+	reqCtx.reader = nil
+	res3, resKey, err = store.MvccStore.MvccGetByStartTs(reqCtx, startTs2)
+	c.Assert(err, IsNil)
+	c.Assert(res3, NotNil)
+	log.Infof("[for debug] resKey=%v pk=%v", resKey, pk)
+	c.Assert(bytes.Compare(resKey, pk), Equals, 0)
 }
