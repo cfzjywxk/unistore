@@ -589,6 +589,7 @@ func (svr *Server) MvccGetByStartTs(ctx context.Context, req *kvrpcpb.MvccGetByS
 		return &kvrpcpb.MvccGetByStartTsResponse{RegionError: reqCtx.regErr}, nil
 	}
 	resp := new(kvrpcpb.MvccGetByStartTsResponse)
+	log.Infof("[for debug] reqStartKey=%v, reqEndKey=%v", reqCtx.regCtx.startKey, reqCtx.regCtx.endKey)
 	mvccInfo, key, err := svr.mvccStore.MvccGetByStartTs(reqCtx, req.StartTs)
 	if err != nil {
 		resp.Error = err.Error()

@@ -3,6 +3,7 @@ package tikv
 import (
 	"bytes"
 	"fmt"
+	"github.com/ngaut/log"
 	"io/ioutil"
 	"os"
 	"sync"
@@ -27,11 +28,15 @@ type TestStore struct {
 }
 
 func (ts *TestStore) newReqCtx() *requestCtx {
+	return ts.newReqCtxWithKeys([]byte{'t'}, []byte{'u'})
+}
+
+func (ts *TestStore) newReqCtxWithKeys(startKey, endKey []byte) *requestCtx {
 	return &requestCtx{
 		regCtx: &regionCtx{
 			latches:  make(map[uint64]*sync.WaitGroup),
-			startKey: []byte{'t'},
-			endKey:   []byte{'u'},
+			startKey: startKey,
+			endKey:   endKey,
 		},
 		svr: ts.Svr,
 	}
@@ -399,7 +404,7 @@ func (s *testMvccSuite) TestMvccGet(c *C) {
 	defer CleanTestStore(store)
 
 	lockTTL := uint64(100)
-	pk := []byte("tpk")
+	pk := []byte("t1_r1")
 	pkVal := []byte("pkVal")
 	startTs1 := uint64(1)
 	commitTs1 := uint64(2)
@@ -455,6 +460,11 @@ func (s *testMvccSuite) TestMvccGet(c *C) {
 	c.Assert(bytes.Compare(res.Writes[3].ShortValue, []byte{0}), Equals, 0)
 
 	// read using MvccGetByStartTs using key current ts
+	/*
+		st := []byte("t1_r0")
+		ed := []byte("t1_r2")
+		res2, resKey, err := store.MvccStore.MvccGetByStartTs(store.newReqCtxWithKeys(st, ed), startTs4)
+	*/
 	res2, resKey, err := store.MvccStore.MvccGetByStartTs(store.newReqCtx(), startTs4)
 	c.Assert(err, IsNil)
 	c.Assert(res2, NotNil)
@@ -484,6 +494,7 @@ func (s *testMvccSuite) TestMvccGet(c *C) {
 	c.Assert(res3, IsNil)
 
 	// read using old startTs
+	log.Infof("[for debug]===")
 	res4, resKey, err := store.MvccStore.MvccGetByStartTs(store.newReqCtx(), startTs2)
 	c.Assert(err, IsNil)
 	c.Assert(res4, NotNil)
