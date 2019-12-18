@@ -2,6 +2,7 @@ package dbreader
 
 import (
 	"bytes"
+	"github.com/ngaut/log"
 	"math"
 
 	"github.com/coocood/badger"
@@ -146,12 +147,15 @@ func (r *DBReader) Get(key []byte, startTS uint64) ([]byte, error) {
 		return nil, nil
 	}
 	if mvcc.DBUserMeta(item.UserMeta()).CommitTS() <= startTS {
+		log.Infof("[for debug] return current item value item=%v", *item)
 		return item.Value()
 	}
 	item = r.getOldItem(key, startTS)
 	if item != nil && !item.IsEmpty() {
+		log.Infof("[for debug] return old item value")
 		return item.Value()
 	}
+	log.Infof("[for debug] return nil item value")
 	return nil, nil
 }
 

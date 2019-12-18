@@ -1,6 +1,7 @@
 package raftstore
 
 import (
+	"github.com/ngaut/log"
 	"time"
 
 	"github.com/ngaut/unistore/metrics"
@@ -34,6 +35,7 @@ type raftWriteBatch struct {
 func (wb *raftWriteBatch) Prewrite(key []byte, lock *mvcc.MvccLock, isPessimisticLock bool) {
 	encodedKey := codec.EncodeBytes(nil, key)
 	putLock, putDefault := mvcc.EncodeLockCFValue(lock)
+	log.Infof("[for debug] putLock=%v putDefault=%v", putLock, putDefault)
 	if len(putDefault) != 0 {
 		// Prewrite with large value.
 		putDefaultReq := &rcpb.Request{

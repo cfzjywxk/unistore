@@ -1083,6 +1083,9 @@ func (a *applier) execCommit(aCtx *applyContext, op commitOp) {
 			sizeDiff -= int64(len(rawKey) + len(lock.OldVal))
 		}
 	} else if bytes.Equal(lock.Primary, rawKey) {
+		// Convert the lock to a delete to store the transaction status.
+		aCtx.wb.SetWithUserMeta(rawKey, nil, userMeta)
+		log.Infof("[for debug] apply new meta=%v", userMeta)
 		// For primary key with Op_Lock type, the value need to be skipped, but we need to keep the transaction status.
 		// So we put it as old key directly.
 		if lock.HasOldVer {

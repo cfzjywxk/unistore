@@ -511,6 +511,7 @@ func (store *MVCCStore) buildPrewriteLock(reqCtx *requestCtx, m *kvrpcpb.Mutatio
 	}
 
 	lock.ForUpdateTS = req.ForUpdateTs
+	log.Infof("[for debug] lock value=%v", lock.Value)
 	return lock, nil
 }
 
@@ -714,6 +715,7 @@ func (store *MVCCStore) checkCommitted(reader *dbreader.DBReader, key []byte, st
 	if userMeta.StartTS() == startTS {
 		return userMeta.CommitTS(), nil
 	}
+	log.Infof("[for debug] startTs=%v", userMeta.StartTS())
 	// look for the key in the old version to check if the key is committed.
 	it := reader.GetOldIter()
 	oldKey := mvcc.EncodeOldKey(key, math.MaxUint64)
@@ -722,16 +724,19 @@ func (store *MVCCStore) checkCommitted(reader *dbreader.DBReader, key []byte, st
 		item := it.Item()
 		foundKey := item.Key()
 		if isVisibleKey(foundKey, startTS) {
+			log.Warn("[for debug] break not visible found item=%v", *item)
 			break
 		}
 		_, ts, err := codec.DecodeUintDesc(foundKey[len(foundKey)-8:])
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
+		log.Infof("[for debug] found item=%v itemSt=%v startTs=%v", *item, mvcc.OldUserMeta(item.UserMeta()).StartTS(), startTS)
 		if mvcc.OldUserMeta(item.UserMeta()).StartTS() == startTS {
 			return ts, nil
 		}
 	}
+	log.Errorf("[for debug] return 0 check committed??")
 	return 0, nil
 }
 
