@@ -197,6 +197,32 @@ func MustPrewritePutErr(pk, key []byte, val []byte, startTs uint64, store *TestS
 	store.c.Assert(err, NotNil)
 }
 
+func MustPrewriteInsert(pk, key []byte, val []byte, startTs uint64, store *TestStore) {
+	prewriteReq := &kvrpcpb.PrewriteRequest{
+		Mutations:    []*kvrpcpb.Mutation{newMutation(kvrpcpb.Op_Insert, key, val)},
+		PrimaryLock:  pk,
+		StartVersion: startTs,
+		LockTtl:      lockTTL,
+		MinCommitTs:  startTs,
+	}
+	err := store.MvccStore.prewriteOptimistic(store.newReqCtx(), prewriteReq.Mutations, prewriteReq)
+	store.c.Assert(err, IsNil)
+}
+
+func MustPrewriteInsertAlreadyExists(pk, key []byte, val []byte, startTs uint64, store *TestStore) {
+	prewriteReq := &kvrpcpb.PrewriteRequest{
+		Mutations:    []*kvrpcpb.Mutation{newMutation(kvrpcpb.Op_Insert, key, val)},
+		PrimaryLock:  pk,
+		StartVersion: startTs,
+		LockTtl:      lockTTL,
+		MinCommitTs:  startTs,
+	}
+	err := store.MvccStore.prewriteOptimistic(store.newReqCtx(), prewriteReq.Mutations, prewriteReq)
+	store.c.Assert(err, NotNil)
+	existErr := err.(*ErrKeyAlreadyExists)
+	store.c.Assert(existErr, NotNil)
+}
+
 func MustPrewriteDelete(pk, key []byte, startTs uint64, store *TestStore) {
 	MustPrewriteOptimistic(pk, key, nil, startTs, 50, startTs, store)
 }
@@ -769,4 +795,41 @@ func (s *testMvccSuite) TestTxnPrewrite(c *C) {
 	MustPrewriteDelete(k, k, 13, store)
 	MustRollbackKey(k, 13, store)
 	MustUnLocked(k, store)
+}
+
+func (s *testMvccSuite) TestPrewriteInsert(c *C) {
+	store, err := NewTestStore("TestPrewriteInsert", "TestPrewriteInsert", c)
+	c.Assert(err, IsNil)
+	defer CleanTestStore(store)
+
+	// nothing at start
+	k1 := []byte("tk1")
+	v1 := []byte("v1")
+	v2 := []byte("v2")
+	v3 := []byte("v3")
+
+	MustPrewritePut(k1, k1, v1, 1, store)
+	MustCommit(k1, 1, 2, store)
+	// "k1" already exist, returns AlreadyExist error
+	MustPrewriteInsertAlreadyExists(k1, k1, v2, 3, store)
+	// Delete "k1"
+	MustPrewriteDelete(k1, k1, 4, store)
+	MustCommit(k1, 4, 5, store)
+	// After delete "k1", insert returns ok
+	MustPrewriteInsert(k1, k1, v2, 6, store)
+	MustCommit(k1, 6, 7, store)
+	// Rollback
+	MustPrewritePut(k1, k1, v3, 8, store)
+	MustRollbackKey(k1, 8, store)
+	MustPrewriteInsertAlreadyExists(k1, k1, v2, 9, store)
+	// Delete "k1" again
+	MustPrewriteDelete(k1, k1, 10, store)
+	MustCommit(k1, 10, 11, store)
+	// Rollback again
+	MustPrewritePut(k1, k1, v3, 12, store)
+	MustRollbackKey(k1, 12, store)
+	// After delete "k1", insert returns ok
+	MustPrewriteInsert(k1, k1, v2, 13, store)
+	MustCommit(k1, 13, 14, store)
+	MustGetVal(k1, v2, 15, store)
 }
