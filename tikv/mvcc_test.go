@@ -197,6 +197,32 @@ func MustPrewritePutErr(pk, key []byte, val []byte, startTs uint64, store *TestS
 	store.c.Assert(err, NotNil)
 }
 
+func MustPrewriteInsert(pk, key []byte, val []byte, startTs uint64, store *TestStore) {
+	prewriteReq := &kvrpcpb.PrewriteRequest{
+		Mutations:    []*kvrpcpb.Mutation{newMutation(kvrpcpb.Op_Insert, key, val)},
+		PrimaryLock:  pk,
+		StartVersion: startTs,
+		LockTtl:      lockTTL,
+		MinCommitTs:  startTs,
+	}
+	err := store.MvccStore.prewriteOptimistic(store.newReqCtx(), prewriteReq.Mutations, prewriteReq)
+	store.c.Assert(err, IsNil)
+}
+
+func MustPrewriteInsertAlreadyExists(pk, key []byte, val []byte, startTs uint64, store *TestStore) {
+	prewriteReq := &kvrpcpb.PrewriteRequest{
+		Mutations:    []*kvrpcpb.Mutation{newMutation(kvrpcpb.Op_Insert, key, val)},
+		PrimaryLock:  pk,
+		StartVersion: startTs,
+		LockTtl:      lockTTL,
+		MinCommitTs:  startTs,
+	}
+	err := store.MvccStore.prewriteOptimistic(store.newReqCtx(), prewriteReq.Mutations, prewriteReq)
+	store.c.Assert(err, NotNil)
+	existErr := err.(*ErrKeyAlreadyExists)
+	store.c.Assert(existErr, NotNil)
+}
+
 func MustPrewriteDelete(pk, key []byte, startTs uint64, store *TestStore) {
 	MustPrewriteOptimistic(pk, key, nil, startTs, 50, startTs, store)
 }
@@ -285,6 +311,26 @@ func MustPrewriteLock(pk []byte, key []byte, startTs uint64, store *TestStore) {
 		LockTtl:      lockTTL,
 	})
 	store.c.Assert(err, IsNil)
+}
+
+func MustCleanup(key []byte, startTs, currentTs uint64, store *TestStore) {
+	err := store.MvccStore.Cleanup(store.newReqCtx(), key, startTs, currentTs)
+	store.c.Assert(err, IsNil)
+}
+
+func MustCleanupErr(key []byte, startTs, currentTs uint64, store *TestStore) {
+	err := store.MvccStore.Cleanup(store.newReqCtx(), key, startTs, currentTs)
+	store.c.Assert(err, NotNil)
+}
+
+func MustTxnHeartBeat(pk []byte, startTs, adviceTTL, expectedTTL uint64, store *TestStore) {
+	lockTTL, err := store.MvccStore.TxnHeartBeat(store.newReqCtx(), &kvrpcpb.TxnHeartBeatRequest{
+		PrimaryLock:   pk,
+		StartVersion:  startTs,
+		AdviseLockTtl: adviceTTL,
+	})
+	store.c.Assert(err, IsNil)
+	store.c.Assert(lockTTL, Equals, expectedTTL)
 }
 
 func (s *testMvccSuite) TestBasicOptimistic(c *C) {
@@ -768,5 +814,91 @@ func (s *testMvccSuite) TestTxnPrewrite(c *C) {
 	// Can prewrite after rollback
 	MustPrewriteDelete(k, k, 13, store)
 	MustRollbackKey(k, 13, store)
+	MustUnLocked(k, store)
+}
+
+func (s *testMvccSuite) TestPrewriteInsert(c *C) {
+	store, err := NewTestStore("TestPrewriteInsert", "TestPrewriteInsert", c)
+	c.Assert(err, IsNil)
+	defer CleanTestStore(store)
+
+	// nothing at start
+	k1 := []byte("tk1")
+	v1 := []byte("v1")
+	v2 := []byte("v2")
+	v3 := []byte("v3")
+
+	MustPrewritePut(k1, k1, v1, 1, store)
+	MustCommit(k1, 1, 2, store)
+	// "k1" already exist, returns AlreadyExist error
+	MustPrewriteInsertAlreadyExists(k1, k1, v2, 3, store)
+	// Delete "k1"
+	MustPrewriteDelete(k1, k1, 4, store)
+	MustCommit(k1, 4, 5, store)
+	// After delete "k1", insert returns ok
+	MustPrewriteInsert(k1, k1, v2, 6, store)
+	MustCommit(k1, 6, 7, store)
+	// Rollback
+	MustPrewritePut(k1, k1, v3, 8, store)
+	MustRollbackKey(k1, 8, store)
+	MustPrewriteInsertAlreadyExists(k1, k1, v2, 9, store)
+	// Delete "k1" again
+	MustPrewriteDelete(k1, k1, 10, store)
+	MustCommit(k1, 10, 11, store)
+	// Rollback again
+	MustPrewritePut(k1, k1, v3, 12, store)
+	MustRollbackKey(k1, 12, store)
+	// After delete "k1", insert returns ok
+	MustPrewriteInsert(k1, k1, v2, 13, store)
+	MustCommit(k1, 13, 14, store)
+	MustGetVal(k1, v2, 15, store)
+}
+
+func (s *testMvccSuite) TestRollbackKey(c *C) {
+	store, err := NewTestStore("TestRollbackKey", "TestRollbackKey", c)
+	c.Assert(err, IsNil)
+	defer CleanTestStore(store)
+
+	k := []byte("tk")
+	v := []byte("v")
+	MustPrewritePut(k, k, v, 5, store)
+	MustCommit(k, 5, 10, store)
+
+	// Lock
+	MustPrewriteLock(k, k, 15, store)
+	MustLocked(k, false, store)
+
+	// Rollback lock
+	MustRollbackKey(k, 15, store)
+	MustUnLocked(k, store)
+	MustGetVal(k, v, 16, store)
+
+	// Rollback delete
+	MustPrewriteDelete(k, k, 17, store)
+	MustLocked(k, false, store)
+	MustRollbackKey(k, 17, store)
+	MustGetVal(k, v, 18, store)
+}
+
+func (s *testMvccSuite) TestCleanup(c *C) {
+	store, err := NewTestStore("TestCleanup", "TestCleanup", c)
+	c.Assert(err, IsNil)
+	defer CleanTestStore(store)
+
+	k := []byte("tk")
+	v := []byte("v")
+	// Cleanup's logic is mostly similar to rollback, except the TTL check. Tests that
+	// not related to TTL check should be covered by other test cases
+	MustPrewritePut(k, k, v, 10, store)
+	MustLocked(k, false, store)
+	MustTxnHeartBeat(k, 10, 100, 100, store)
+	// Check the last txn_heart_beat has set the lock's TTL to 100
+	MustTxnHeartBeat(k, 10, 90, 100, store)
+	// TTL not expired. Do nothing but returns an error
+	MustCleanupErr(k, 10, 20, store)
+	MustLocked(k, false, store)
+	MustCleanup(k, 11, 20, store)
+	// TTL expired. The lock should be removed
+	MustCleanup(k, 10, 120<<18, store)
 	MustUnLocked(k, store)
 }
