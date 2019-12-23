@@ -313,6 +313,26 @@ func MustPrewriteLock(pk []byte, key []byte, startTs uint64, store *TestStore) {
 	store.c.Assert(err, IsNil)
 }
 
+func MustCleanup(key []byte, startTs, currentTs uint64, store *TestStore) {
+	err := store.MvccStore.Cleanup(store.newReqCtx(), key, startTs, currentTs)
+	store.c.Assert(err, IsNil)
+}
+
+func MustCleanupErr(key []byte, startTs, currentTs uint64, store *TestStore) {
+	err := store.MvccStore.Cleanup(store.newReqCtx(), key, startTs, currentTs)
+	store.c.Assert(err, NotNil)
+}
+
+func MustTxnHeartBeat(pk []byte, startTs, adviceTTL, expectedTTL uint64, store *TestStore) {
+	lockTTL, err := store.MvccStore.TxnHeartBeat(store.newReqCtx(), &kvrpcpb.TxnHeartBeatRequest{
+		PrimaryLock:   pk,
+		StartVersion:  startTs,
+		AdviseLockTtl: adviceTTL,
+	})
+	store.c.Assert(err, IsNil)
+	store.c.Assert(lockTTL, Equals, expectedTTL)
+}
+
 func (s *testMvccSuite) TestBasicOptimistic(c *C) {
 	var err error
 	store, err := NewTestStore("basic_optimistic_db", "basic_optimistic_log", c)
@@ -832,4 +852,53 @@ func (s *testMvccSuite) TestPrewriteInsert(c *C) {
 	MustPrewriteInsert(k1, k1, v2, 13, store)
 	MustCommit(k1, 13, 14, store)
 	MustGetVal(k1, v2, 15, store)
+}
+
+func (s *testMvccSuite) TestRollbackKey(c *C) {
+	store, err := NewTestStore("TestRollbackKey", "TestRollbackKey", c)
+	c.Assert(err, IsNil)
+	defer CleanTestStore(store)
+
+	k := []byte("tk")
+	v := []byte("v")
+	MustPrewritePut(k, k, v, 5, store)
+	MustCommit(k, 5, 10, store)
+
+	// Lock
+	MustPrewriteLock(k, k, 15, store)
+	MustLocked(k, false, store)
+
+	// Rollback lock
+	MustRollbackKey(k, 15, store)
+	MustUnLocked(k, store)
+	MustGetVal(k, v, 16, store)
+
+	// Rollback delete
+	MustPrewriteDelete(k, k, 17, store)
+	MustLocked(k, false, store)
+	MustRollbackKey(k, 17, store)
+	MustGetVal(k, v, 18, store)
+}
+
+func (s *testMvccSuite) TestCleanup(c *C) {
+	store, err := NewTestStore("TestCleanup", "TestCleanup", c)
+	c.Assert(err, IsNil)
+	defer CleanTestStore(store)
+
+	k := []byte("tk")
+	v := []byte("v")
+	// Cleanup's logic is mostly similar to rollback, except the TTL check. Tests that
+	// not related to TTL check should be covered by other test cases
+	MustPrewritePut(k, k, v, 10, store)
+	MustLocked(k, false, store)
+	MustTxnHeartBeat(k, 10, 100, 100, store)
+	// Check the last txn_heart_beat has set the lock's TTL to 100
+	MustTxnHeartBeat(k, 10, 90, 100, store)
+	// TTL not expired. Do nothing but returns an error
+	MustCleanupErr(k, 10, 20, store)
+	MustLocked(k, false, store)
+	MustCleanup(k, 11, 20, store)
+	// TTL expired. The lock should be removed
+	MustCleanup(k, 10, 120<<18, store)
+	MustUnLocked(k, store)
 }
