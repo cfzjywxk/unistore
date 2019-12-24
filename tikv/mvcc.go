@@ -604,6 +604,7 @@ func (store *MVCCStore) handleLockNotFound(reqCtx *requestCtx, key []byte, start
 		return ErrLockNotFound
 	}
 	useMeta := mvcc.DBUserMeta(item.UserMeta())
+	log.Infof("[for debug] st=%v ct=%v startTs=%v", useMeta.StartTS(), useMeta.CommitTS(), startTS)
 	if useMeta.StartTS() == startTS {
 		// Already committed.
 		return nil
@@ -616,6 +617,7 @@ func (store *MVCCStore) handleLockNotFound(reqCtx *requestCtx, key []byte, start
 			return nil
 		}
 	}
+	log.Infof("[for debug] ???")
 	return ErrLockNotFound
 }
 

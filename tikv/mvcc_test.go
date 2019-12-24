@@ -3,6 +3,7 @@ package tikv
 import (
 	"bytes"
 	"fmt"
+	"github.com/ngaut/log"
 	"io/ioutil"
 	"math"
 	"os"
@@ -294,6 +295,7 @@ func kvGet(key []byte, readTs uint64, store *TestStore) ([]byte, error) {
 		return nil, err
 	}
 	getVal, err := store.newReqCtx().getDBReader().Get(key, readTs)
+	log.Infof("[for debug] getVal=%v", getVal)
 	return getVal, err
 }
 
@@ -901,4 +903,36 @@ func (s *testMvccSuite) TestCleanup(c *C) {
 	// TTL expired. The lock should be removed
 	MustCleanup(k, 10, 120<<18, store)
 	MustUnLocked(k, store)
+}
+
+func (s *testMvccSuite) TestCommit(c *C) {
+	store, err := NewTestStore("TestCommit", "TestCommit", c)
+	c.Assert(err, IsNil)
+	defer CleanTestStore(store)
+
+	k1 := []byte("tk")
+	v1 := []byte("v")
+	k2 := []byte("tk2")
+	k3 := []byte("tk3")
+
+	MustPrewritePut(k1, k1, v1, 10, store)
+	MustPrewriteLock(k1, k2, 10, store)
+	MustPrewriteDelete(k1, k3, 10, store)
+	MustLocked(k1, false, store)
+	MustLocked(k2, false, store)
+	MustLocked(k3, false, store)
+	MustCommit(k1, 10, 15, store)
+	MustCommit(k2, 10, 15, store)
+	MustCommit(k3, 10, 15, store)
+	MustGetVal(k1, v1, 16, store)
+	MustGetNone(k2, 16, store)
+	MustGetNone(k3, 16, store)
+	// Commit again has no effect
+	MustCommit(k1, 10, 15, store)
+	log.Infof("[for debug] >>>")
+	MustCommit(k2, 10, 15, store)
+	MustCommit(k3, 10, 15, store)
+	MustGetVal(k1, v1, 16, store)
+	MustGetNone(k2, 16, store)
+	MustGetNone(k3, 16, store)
 }
