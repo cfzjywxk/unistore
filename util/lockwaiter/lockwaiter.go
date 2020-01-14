@@ -91,6 +91,8 @@ func (w *Waiter) Wait() WaitResult {
 				if time.Now().Add(delaySleepDuration).Before(w.deadlineTime) {
 					if w.timer.Stop() {
 						w.timer.Reset(delaySleepDuration)
+					} else {
+						panic("[for debug] stop timer fail")
 					}
 				}
 				w.CommitTs = result.CommitTS
