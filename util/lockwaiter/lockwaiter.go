@@ -50,13 +50,14 @@ func (q *queue) removeWaiter(w *Waiter) {
 }
 
 type Waiter struct {
-	deadlineTime time.Time
-	timer        *time.Timer
-	ch           chan WaitResult
-	startTS      uint64
-	LockTS       uint64
-	KeyHash      uint64
-	CommitTs     uint64
+	deadlineTime  time.Time
+	timer         *time.Timer
+	ch            chan WaitResult
+	startTS       uint64
+	LockTS        uint64
+	KeyHash       uint64
+	CommitTs      uint64
+	wakeupDelayed bool
 }
 
 // WakeupWaitTime is the implementation of variable "wake-up-delay-duration"
@@ -78,7 +79,7 @@ func (w *Waiter) Wait() WaitResult {
 	for {
 		select {
 		case <-w.timer.C:
-			if w.CommitTs > 0 {
+			if w.wakeupDelayed {
 				return WaitResult{WakeupSleepTime: WakeupDelayTimeout, CommitTS: w.CommitTs}
 			}
 			return WaitResult{WakeupSleepTime: WaitTimeout}
@@ -93,7 +94,10 @@ func (w *Waiter) Wait() WaitResult {
 					}
 				}
 				w.CommitTs = result.CommitTS
+				w.wakeupDelayed = true
 				continue
+			} else if result.WakeupSleepTime == WakeUpThisWaiter {
+				log.Infof("[for debug] wake up this st=%v ct=%v, lt=%v, hash=%v", w.startTS, w.CommitTs, w.LockTS, w.KeyHash)
 			}
 			return result
 		}
@@ -120,6 +124,7 @@ func (lw *Manager) NewWaiter(startTS, lockTS, keyHash uint64, timeout time.Durat
 	} else {
 		lw.waitingQueues[keyHash] = q
 	}
+	log.Infof("[for debug] new waiter lock queue len=%v", len(lw.waitingQueues[keyHash].waiters))
 	lw.mu.Unlock()
 	return waiter
 }
@@ -156,6 +161,7 @@ func (lw *Manager) WakeUp(txn, commitTS uint64, keyHashes []uint64) {
 			w.LockTS = txn
 			w.ch <- WaitResult{WakeupSleepTime: WakeupDelayTimeout, CommitTS: commitTS}
 		}
+		log.Infof("[for debug] wakeup delay queue len=%v", len(wakeUpDelayWaiters))
 	}
 }
 
