@@ -79,10 +79,6 @@ func (w *Waiter) Wait() WaitResult {
 	for {
 		select {
 		case <-w.timer.C:
-			/*
-			log.Warnf("[for debug] timer.C event wake up this st=%v ct=%v, lt=%v, hash=%v delayed=%v",
-				w.startTS, w.CommitTs, w.LockTS, w.KeyHash, w.wakeupDelayed)
-			*/
 			if w.wakeupDelayed {
 				return WaitResult{WakeupSleepTime: WakeupDelayTimeout, CommitTS: w.CommitTs}
 			}
@@ -91,8 +87,9 @@ func (w *Waiter) Wait() WaitResult {
 			if result.WakeupSleepTime == WakeupDelayTimeout {
 				// wait as config "wake-up-delay-duration" specified, the oldest waiter won't sleep and
 				// will be more likely  to get the lock
-				delaySleepDuration := time.Duration(result.WakeupSleepTime) * time.Millisecond
 				w.CommitTs = result.CommitTS
+				/*
+				delaySleepDuration := time.Duration(result.WakeupSleepTime) * time.Millisecond
 				if time.Now().Add(delaySleepDuration).Before(w.deadlineTime) {
 					if w.timer.Stop() {
 						w.timer.Reset(delaySleepDuration)
@@ -100,10 +97,9 @@ func (w *Waiter) Wait() WaitResult {
 						return WaitResult{WakeupSleepTime: WakeupDelayTimeout, CommitTS: w.CommitTs}
 					}
 				}
+				*/
 				w.wakeupDelayed = true
 				continue
-			} else if result.WakeupSleepTime == WakeUpThisWaiter {
-				//log.Warnf("[for debug] wake up this st=%v ct=%v, lt=%v, hash=%v", w.startTS, w.CommitTs, w.LockTS, w.KeyHash)
 			}
 			return result
 		}
@@ -130,7 +126,6 @@ func (lw *Manager) NewWaiter(startTS, lockTS, keyHash uint64, timeout time.Durat
 	} else {
 		lw.waitingQueues[keyHash] = q
 	}
-	//log.Warnf("[for debug] new waiter lock queue len=%v", len(lw.waitingQueues[keyHash].waiters))
 	lw.mu.Unlock()
 	return waiter
 }
@@ -167,7 +162,6 @@ func (lw *Manager) WakeUp(txn, commitTS uint64, keyHashes []uint64) {
 			w.LockTS = txn
 			w.ch <- WaitResult{WakeupSleepTime: WakeupDelayTimeout, CommitTS: commitTS}
 		}
-		//log.Warnf("[for debug] wakeup delay queue len=%v", len(wakeUpDelayWaiters))
 	}
 }
 
