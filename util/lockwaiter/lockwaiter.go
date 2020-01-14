@@ -76,6 +76,7 @@ const WakeUpThisWaiter WakeupWaitTime = 0
 const WakeupDelayTimeout WakeupWaitTime = 1
 
 func (w *Waiter) Wait() WaitResult {
+	resetCnt := 0
 	for {
 		select {
 		case <-w.timer.C:
@@ -89,6 +90,15 @@ func (w *Waiter) Wait() WaitResult {
 				// will be more likely  to get the lock
 				w.CommitTs = result.CommitTS
 				w.wakeupDelayed = true
+				if resetCnt < 10 {
+					resetCnt++
+					delaySleepDuration := time.Duration(result.WakeupSleepTime) * time.Millisecond
+					if w.timer.Stop() {
+						w.timer.Reset(delaySleepDuration)
+					} else {
+						return WaitResult{WakeupSleepTime: WakeupDelayTimeout, CommitTS: w.CommitTs}
+					}
+				}
 				continue
 			}
 			return result
