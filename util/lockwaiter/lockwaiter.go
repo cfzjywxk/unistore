@@ -79,6 +79,8 @@ func (w *Waiter) Wait() WaitResult {
 	for {
 		select {
 		case <-w.timer.C:
+			log.Warnf("[for debug] timer.C event wake up this st=%v ct=%v, lt=%v, hash=%v delayed=%v",
+				w.startTS, w.CommitTs, w.LockTS, w.KeyHash, w.wakeupDelayed)
 			if w.wakeupDelayed {
 				return WaitResult{WakeupSleepTime: WakeupDelayTimeout, CommitTS: w.CommitTs}
 			}
@@ -88,14 +90,14 @@ func (w *Waiter) Wait() WaitResult {
 				// wait as config "wake-up-delay-duration" specified, the oldest waiter won't sleep and
 				// will be more likely  to get the lock
 				delaySleepDuration := time.Duration(result.WakeupSleepTime) * time.Millisecond
+				w.CommitTs = result.CommitTS
 				if time.Now().Add(delaySleepDuration).Before(w.deadlineTime) {
 					if w.timer.Stop() {
 						w.timer.Reset(delaySleepDuration)
 					} else {
-						panic("[for debug] stop timer fail")
+						return WaitResult{WakeupSleepTime: WakeupDelayTimeout, CommitTS: w.CommitTs}
 					}
 				}
-				w.CommitTs = result.CommitTS
 				w.wakeupDelayed = true
 				continue
 			} else if result.WakeupSleepTime == WakeUpThisWaiter {
