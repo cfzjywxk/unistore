@@ -43,8 +43,8 @@ type regionCtx struct {
 	approximateSize int64
 	diff            int64
 
-	latches   map[uint64]*sync.WaitGroup
-	latchesMu sync.RWMutex
+	//latches   map[uint64]*sync.WaitGroup
+	latches   sync.Map
 
 	refCount sync.WaitGroup
 	parent   unsafe.Pointer // Parent is used to wait for all latches being released.
@@ -54,8 +54,8 @@ type regionCtx struct {
 
 func newRegionCtx(meta *metapb.Region, parent *regionCtx, checker raftstore.LeaderChecker) *regionCtx {
 	regCtx := &regionCtx{
-		meta:          meta,
-		latches:       make(map[uint64]*sync.WaitGroup),
+		meta: meta,
+		//latches:       make(map[uint64]*sync.WaitGroup),
 		regionEpoch:   unsafe.Pointer(meta.GetRegionEpoch()),
 		parent:        unsafe.Pointer(parent),
 		leaderChecker: checker,
@@ -64,6 +64,14 @@ func newRegionCtx(meta *metapb.Region, parent *regionCtx, checker raftstore.Lead
 	regCtx.endKey = regCtx.rawEndKey()
 	regCtx.refCount.Add(1)
 	return regCtx
+}
+
+func (ri *regionCtx) getLatchVal(keyHash uint64) *sync.WaitGroup {
+	v, ok := ri.latches.Load(keyHash)
+	if ok {
+		return v.(*sync.WaitGroup)
+	}
+	return nil
 }
 
 func (ri *regionCtx) updateRegionMeta(meta *metapb.Region) {
@@ -123,7 +131,7 @@ func (ri *regionCtx) unmarshal(data []byte) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	ri.latches = make(map[uint64]*sync.WaitGroup)
+	//ri.latches = make(map[uint64]*sync.WaitGroup)
 	ri.startKey = ri.rawStartKey()
 	ri.endKey = ri.rawEndKey()
 	ri.regionEpoch = unsafe.Pointer(ri.meta.RegionEpoch)
@@ -144,15 +152,14 @@ func (ri *regionCtx) marshal() []byte {
 func (ri *regionCtx) tryAcquireLatches(hashVals []uint64) (bool, *sync.WaitGroup) {
 	wg := new(sync.WaitGroup)
 	wg.Add(1)
-	ri.latchesMu.Lock()
-	defer ri.latchesMu.Unlock()
 	for _, hashVal := range hashVals {
-		if wg, ok := ri.latches[hashVal]; ok {
-			return false, wg
+		wgVal := ri.getLatchVal(hashVal)
+		if wgVal != nil {
+			return false, wgVal
 		}
 	}
 	for _, hashVal := range hashVals {
-		ri.latches[hashVal] = wg
+		ri.latches.Store(hashVal, wg)
 	}
 	return true, nil
 }
@@ -174,11 +181,9 @@ func (ri *regionCtx) AcquireLatches(hashVals []uint64) {
 }
 
 func (ri *regionCtx) ReleaseLatches(hashVals []uint64) {
-	ri.latchesMu.Lock()
-	defer ri.latchesMu.Unlock()
-	wg := ri.latches[hashVals[0]]
+	wg := ri.getLatchVal(hashVals[0])
 	for _, hashVal := range hashVals {
-		delete(ri.latches, hashVal)
+		ri.latches.Delete(hashVal)
 	}
 	wg.Done()
 }
