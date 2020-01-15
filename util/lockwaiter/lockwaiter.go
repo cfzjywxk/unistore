@@ -1,6 +1,7 @@
 package lockwaiter
 
 import (
+	"github.com/ngaut/unistore/config"
 	"sort"
 	"sync"
 	"time"
@@ -87,7 +88,7 @@ func (w *Waiter) Wait() WaitResult {
 			if result.WakeupSleepTime == WakeupDelayTimeout {
 				w.CommitTs = result.CommitTS
 				w.wakeupDelayed = true
-				delaySleepDuration := time.Duration(result.WakeupSleepTime) * time.Millisecond
+				delaySleepDuration := time.Duration(config.GetGlobalConf().PessimisticTxn.WakeUpDelayDuration) * time.Millisecond
 				if time.Now().Add(delaySleepDuration).Before(w.deadlineTime) {
 					if w.timer.Stop() {
 						w.timer.Reset(delaySleepDuration)
