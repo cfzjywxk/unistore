@@ -76,6 +76,11 @@ const WakeUpThisWaiter WakeupWaitTime = 0
 const WakeupDelayTimeout WakeupWaitTime = 1
 
 func (w *Waiter) Wait() WaitResult {
+	st := time.Now()
+	defer func() {
+		diff := time.Since(st)
+		log.Warnf("[for debug] Wait diff=%v in ms", diff.Milliseconds())
+	}()
 	for {
 		select {
 		case <-w.timer.C:
@@ -85,8 +90,6 @@ func (w *Waiter) Wait() WaitResult {
 			return WaitResult{WakeupSleepTime: WaitTimeout}
 		case result := <-w.ch:
 			if result.WakeupSleepTime == WakeupDelayTimeout {
-				// wait as config "wake-up-delay-duration" specified, the oldest waiter won't sleep and
-				// will be more likely  to get the lock
 				w.CommitTs = result.CommitTS
 				w.wakeupDelayed = true
 				continue
