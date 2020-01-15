@@ -210,7 +210,11 @@ func (svr *Server) KvPessimisticLock(ctx context.Context, req *kvrpcpb.Pessimist
 	if result.WakeupSleepTime == lockwaiter.WaitTimeout {
 		svr.mvccStore.lockWaiterManager.CleanUp(waiter)
 		return resp, nil
-	} else if result.DeadlockResp != nil {
+	}
+	if result.WakeupSleepTime != lockwaiter.WakeUpThisWaiter {
+		svr.mvccStore.lockWaiterManager.CleanUp(waiter)
+	}
+	if result.DeadlockResp != nil {
 		log.Errorf("deadlock found for entry=%v", result.DeadlockResp.Entry)
 		errLocked := err.(*ErrLocked)
 		deadlockErr := &ErrDeadlock{
@@ -220,9 +224,6 @@ func (svr *Server) KvPessimisticLock(ctx context.Context, req *kvrpcpb.Pessimist
 		}
 		resp.Errors, resp.RegionError = convertToPBErrors(deadlockErr)
 		return resp, nil
-	}
-	if result.WakeupSleepTime != lockwaiter.WakeUpThisWaiter {
-		svr.mvccStore.lockWaiterManager.CleanUp(waiter)
 	}
 	waitWc = true
 	conflictCommitTS := result.CommitTS

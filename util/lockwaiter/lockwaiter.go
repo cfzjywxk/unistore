@@ -108,6 +108,12 @@ func (w *Waiter) Wait() WaitResult {
 	}
 }
 
+func (w *Waiter) DrainCh() {
+	for len(w.ch) > 0 {
+		<- w.ch
+	}
+}
+
 // Wait waits on a lock until waked by others or timeout.
 func (lw *Manager) NewWaiter(startTS, lockTS, keyHash uint64, timeout time.Duration) *Waiter {
 	// allocate memory before hold the lock.
@@ -178,6 +184,7 @@ func (lw *Manager) CleanUp(w *Waiter) {
 		}
 	}
 	lw.mu.Unlock()
+	w.DrainCh()
 }
 
 // WakeUpDetection wakes up waiters waiting for deadlock detection results
