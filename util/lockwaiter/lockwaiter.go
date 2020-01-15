@@ -92,6 +92,7 @@ func (w *Waiter) Wait() WaitResult {
 					if w.timer.Stop() {
 						w.timer.Reset(delaySleepDuration)
 					} else {
+						log.Errorf("[for debug] stop timer failed")
 						return WaitResult{WakeupSleepTime: WakeupDelayTimeout, CommitTS: w.CommitTs}
 					}
 				}

@@ -197,14 +197,15 @@ func (svr *Server) KvPessimisticLock(ctx context.Context, req *kvrpcpb.Pessimist
 	if waiter == nil {
 		return resp, nil
 	}
+	wst := time.Now()
 	result := waiter.Wait()
 	svr.mvccStore.DeadlockDetectCli.CleanUpWaitFor(req.StartVersion, waiter.LockTS, waiter.KeyHash)
+	svr.mvccStore.lockWaiterManager.CleanUp(waiter)
 	if result.WakeupSleepTime == lockwaiter.WaitTimeout {
-		svr.mvccStore.lockWaiterManager.CleanUp(waiter)
 		return resp, nil
 	}
-	if result.WakeupSleepTime != lockwaiter.WakeUpThisWaiter {
-		svr.mvccStore.lockWaiterManager.CleanUp(waiter)
+	if result.WakeupSleepTime == lockwaiter.WakeupDelayTimeout {
+		log.Warnf("[for debug] WakeupDelayTimeout diff=%v return conflict error", time.Since(wst))
 	}
 	if result.DeadlockResp != nil {
 		log.Errorf("deadlock found for entry=%v", result.DeadlockResp.Entry)
