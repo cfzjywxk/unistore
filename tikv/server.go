@@ -187,15 +187,7 @@ func (svr *Server) KvPessimisticLock(ctx context.Context, req *kvrpcpb.Pessimist
 	if err != nil {
 		return &kvrpcpb.PessimisticLockResponse{Errors: []*kvrpcpb.KeyError{convertToKeyError(err)}}, nil
 	}
-	startLock := time.Now()
-	waitWc := false
-	defer func() {
-		reqCtx.finish()
-		if waitWc {
-			timeDiff := time.Since(startLock)
-			log.Warnf("[for debug] KvPessimisticLock cost=%v in ms", timeDiff.Milliseconds())
-		}
-	}()
+	defer reqCtx.finish()
 	if reqCtx.regErr != nil {
 		return &kvrpcpb.PessimisticLockResponse{RegionError: reqCtx.regErr}, nil
 	}
@@ -225,7 +217,6 @@ func (svr *Server) KvPessimisticLock(ctx context.Context, req *kvrpcpb.Pessimist
 		resp.Errors, resp.RegionError = convertToPBErrors(deadlockErr)
 		return resp, nil
 	}
-	waitWc = true
 	conflictCommitTS := result.CommitTS
 	if conflictCommitTS < req.GetForUpdateTs() {
 		// The key is rollbacked, we don't have the exact commitTS, but we can use the server's latest.

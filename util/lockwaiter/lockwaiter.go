@@ -76,11 +76,6 @@ const WakeUpThisWaiter WakeupWaitTime = 0
 const WakeupDelayTimeout WakeupWaitTime = 1
 
 func (w *Waiter) Wait() WaitResult {
-	st := time.Now()
-	defer func() {
-		diff := time.Since(st)
-		log.Warnf("[for debug] Wait diff=%v in ms", diff.Milliseconds())
-	}()
 	for {
 		select {
 		case <-w.timer.C:
@@ -104,13 +99,12 @@ func (w *Waiter) Wait() WaitResult {
 			}
 			return result
 		}
-		log.Warnf("[for debug] I am %v, still waiting", w.startTS)
 	}
 }
 
 func (w *Waiter) DrainCh() {
 	for len(w.ch) > 0 {
-		<- w.ch
+		<-w.ch
 	}
 }
 

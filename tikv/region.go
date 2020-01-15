@@ -169,9 +169,7 @@ func (ri *regionCtx) AcquireLatches(hashVals []uint64) {
 			}
 			return
 		}
-		log.Warnf("[for debug] waiting for latch hashVals=%v", hashVals)
 		wg.Wait()
-		log.Warnf("[for debug] finish waiting latch hashVals=%v", hashVals)
 	}
 }
 
