@@ -87,6 +87,7 @@ func (w *Waiter) Wait() WaitResult {
 			if result.WakeupSleepTime == WakeupDelayTimeout {
 				w.CommitTs = result.CommitTS
 				w.wakeupDelayed = true
+				/*
 				delaySleepDuration := time.Duration(result.WakeupSleepTime) * time.Millisecond
 				if time.Now().Add(delaySleepDuration).Before(w.deadlineTime) {
 					if w.timer.Stop() {
@@ -95,6 +96,7 @@ func (w *Waiter) Wait() WaitResult {
 						return WaitResult{WakeupSleepTime: WakeupDelayTimeout, CommitTS: w.CommitTs}
 					}
 				}
+				*/
 				continue
 			}
 			return result
