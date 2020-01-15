@@ -187,7 +187,12 @@ func (svr *Server) KvPessimisticLock(ctx context.Context, req *kvrpcpb.Pessimist
 	if err != nil {
 		return &kvrpcpb.PessimisticLockResponse{Errors: []*kvrpcpb.KeyError{convertToKeyError(err)}}, nil
 	}
-	defer reqCtx.finish()
+	startLock := time.Now()
+	defer func() {
+		reqCtx.finish()
+		timeDiff := time.Since(startLock)
+		log.Warnf("[for debug] KvPessimisticLock cost=%v in ms", timeDiff.Milliseconds())
+	}()
 	if reqCtx.regErr != nil {
 		return &kvrpcpb.PessimisticLockResponse{RegionError: reqCtx.regErr}, nil
 	}
