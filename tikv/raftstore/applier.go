@@ -934,12 +934,14 @@ func (a *applier) execCustomLog(actx *applyContext, cl *raftlog.CustomRaftLog) (
 		cl.IterateRollback(func(key []byte, deleteLock bool) {
 			actx.wb.Rollback(key)
 			if deleteLock {
+				log.Infof("[for debug] execCustomLog.TypeRolback DeleteLock rawkey=%v", key)
 				actx.wb.DeleteLock(key[:len(key)-8])
 			}
 			cnt++
 		})
 	case raftlog.TypePessimisticRollback:
 		cl.IteratePessimisticRollback(func(key []byte) {
+			log.Infof("[for debug] execCustomLog.TypePessimisticRollback DeleteLock rawkey=%v", key)
 			actx.wb.DeleteLock(key)
 			cnt++
 		})
@@ -1145,6 +1147,7 @@ func (a *applier) commitLock(aCtx *applyContext, rawKey []byte, val []byte, comm
 	if sizeDiff > 0 {
 		a.metrics.sizeDiffHint += uint64(sizeDiff)
 	}
+	log.Infof("[for debug] commitLock DeleteLock rawkey=%v", rawKey)
 	aCtx.wb.DeleteLock(rawKey)
 }
 
@@ -1170,6 +1173,7 @@ func (a *applier) execRollback(aCtx *applyContext, op rollbackOp) {
 		aCtx.wb.Rollback(append(rawKey, remain...))
 		if op.delLock != nil {
 			aCtx.wb.DeleteLock(rawKey)
+			log.Infof("[for debug] execRollback delete lock rawkey=%v", rawKey)
 		}
 		return
 	}
@@ -1179,6 +1183,7 @@ func (a *applier) execRollback(aCtx *applyContext, op rollbackOp) {
 			panic(op.delLock.Key)
 		}
 		aCtx.wb.DeleteLock(rawKey)
+		log.Infof("[for debug] execRollback op.delLock delete lock rawkey=%v", rawKey)
 	}
 }
 
@@ -1217,6 +1222,7 @@ func (a *applier) execDeleteRange(aCtx *applyContext, req *raft_cmdpb.DeleteRang
 		if bytes.Compare(lockIt.Key(), endKey) >= 0 {
 			break
 		}
+		log.Infof("[for debug] execDeleteRange DeleteLock rawkey=%v", lockIt.Key())
 		aCtx.wb.DeleteLock(safeCopy(lockIt.Key()))
 	}
 	return
