@@ -995,8 +995,10 @@ func (store *MVCCStore) ResolveLock(reqCtx *requestCtx, startTS, commitTS uint64
 			if commitTS > 0 {
 				lock := mvcc.DecodeLock(lockVals[i])
 				tmpDiff += len(lockKey) + len(lock.Value)
+				log.Infof("[for debug] resolve lock commit key=%v lock=%v", lockKey, lock)
 				batch.Commit(lockKey, &lock)
 			} else {
+				log.Infof("[for debug] resolve lock rollback key=%v", lockKey)
 				batch.Rollback(lockKey, true)
 			}
 		}
