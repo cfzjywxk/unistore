@@ -220,6 +220,7 @@ func (store *MVCCStore) PessimisticLock(reqCtx *requestCtx, req *kvrpcpb.Pessimi
 	batch := store.dbWriter.NewWriteBatch(startTS, 0, reqCtx.rpcCtx)
 	for _, m := range mutations {
 		lock, err := store.checkConflictInLockStore(reqCtx, m, startTS)
+		log.Infof("[for debug] check result err=%v startTS=%v lock=%v", startTS, lock)
 		if err == ErrAlreadyRollback {
 			return nil, err
 		}
