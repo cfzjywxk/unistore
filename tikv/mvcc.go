@@ -657,6 +657,15 @@ func (store *MVCCStore) Commit(req *requestCtx, keys [][]byte, startTS, commitTS
 		}
 		lock := mvcc.DecodeLock(buf)
 		if lock.StartTS != startTS {
+			// This maybe primary key already committed, and secondary key resolved by other transactions,
+			// the resolver will commit the secondary keys, and the commit on secondary keys could not find
+			// the correspond lock
+			keyCommitTS, checkErr := store.checkCommitted(req.getDBReader(), key, startTS)
+			if checkErr == nil {
+				if keyCommitTS > 0 {
+					continue
+				}
+			}
 			return ErrReplaced
 		}
 		if lock.Op == uint8(kvrpcpb.Op_PessimisticLock) {
