@@ -691,6 +691,8 @@ func (store *MVCCStore) Commit(req *requestCtx, keys [][]byte, startTS, commitTS
 		}
 		isPessimisticTxn = lock.ForUpdateTS > 0
 		tmpDiff += len(key) + len(lock.Value)
+		log.Infof("[for debug] StartTS=%v CommitTS=%v Commit request for key=%v lock=%v total keys=%v", startTS,
+			commitTS, key, lock, len(keys))
 		batch.Commit(key, &lock)
 	}
 	atomic.AddInt64(&regCtx.diff, int64(tmpDiff))
