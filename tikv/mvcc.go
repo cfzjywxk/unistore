@@ -247,6 +247,7 @@ func (store *MVCCStore) PessimisticLock(reqCtx *requestCtx, req *kvrpcpb.Pessimi
 			return nil, err1
 		}
 		batch.PessimisticLock(m.Key, lock)
+		log.Infof("[for debug] startTS=%v build pessimistic lock key=%v lock=%v", startTS, m.Key, lock)
 	}
 	err = store.dbWriter.Write(batch)
 	return nil, err
@@ -269,6 +270,7 @@ func (store *MVCCStore) PessimisticRollback(reqCtx *requestCtx, req *kvrpcpb.Pes
 			if batch == nil {
 				batch = store.dbWriter.NewWriteBatch(startTS, 0, reqCtx.rpcCtx)
 			}
+			log.Infof("[for debug] startTS=%v pessimistic rollback lock key=%v lock=%v", startTS, k, lock)
 			batch.PessimisticRollback(k)
 		}
 	}
