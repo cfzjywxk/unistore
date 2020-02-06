@@ -220,7 +220,7 @@ func (store *MVCCStore) PessimisticLock(reqCtx *requestCtx, req *kvrpcpb.Pessimi
 	batch := store.dbWriter.NewWriteBatch(startTS, 0, reqCtx.rpcCtx)
 	for _, m := range mutations {
 		lock, err := store.checkConflictInLockStore(reqCtx, m, startTS)
-		log.Infof("[for debug] check result err=%v startTS=%v lock=%v", err, startTS, lock)
+		log.Infof("[for debug] check result err=%v startTS=%v key=%v lock=%v", err, startTS, m.Key, lock)
 		if err == ErrAlreadyRollback {
 			return nil, err
 		}
@@ -531,7 +531,17 @@ func (store *MVCCStore) prewritePessimistic(reqCtx *requestCtx, mutations []*kvr
 		log.Infof("[for debug] buildPrewriteLock succ key=%v Op=%v startTS=%v lock=%v", m.Key, lock.Op, startTS, lock)
 		batch.Prewrite(m.Key, lock)
 	}
-	return store.dbWriter.Write(batch)
+	err = store.dbWriter.Write(batch)
+	if err == nil {
+		for _, m := range mutations {
+			lock := store.getLock(reqCtx, m.Key)
+			if lock == nil {
+				log.Errorf("[for debug] key=%v lock not found", m.Key)
+				panic("lock not found???")
+			}
+		}
+	}
+	return err
 }
 
 func encodeFromOldRow(oldRow, buf []byte) ([]byte, error) {

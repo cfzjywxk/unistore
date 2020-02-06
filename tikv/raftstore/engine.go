@@ -2,6 +2,7 @@ package raftstore
 
 import (
 	"bytes"
+	"github.com/ngaut/log"
 	"math"
 	"time"
 
@@ -251,9 +252,11 @@ func (wb *WriteBatch) WriteToKV(bundle *mvcc.DBBundle) error {
 				if !bundle.LockStore.DeleteWithHint(entry.Key, hint) {
 					panic("failed to delete key")
 				}
+				log.Infof("[for debug] Delete LockStore key=%v meta=%v val=%v", entry.Key, entry.UserMeta, entry.Value)
 			case mvcc.LockUserMetaRollbackGCByte:
 				bundle.RollbackStore.Delete(entry.Key)
 			default:
+				log.Infof("[for debug] Put Into LockStore key=%v meta=%v val=%v", entry.Key, entry.UserMeta, entry.Value)
 				bundle.LockStore.PutWithHint(entry.Key, entry.Value, hint)
 			}
 		}
