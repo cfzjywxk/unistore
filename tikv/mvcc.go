@@ -525,6 +525,7 @@ func (store *MVCCStore) prewritePessimistic(reqCtx *requestCtx, mutations []*kvr
 		if err1 != nil {
 			return err1
 		}
+		log.Infof("[for debug] buildPrewriteLock succ key=%v Op=%v startTS=%v lock=%v", m.Key, lock.Op, startTS, lock)
 		batch.Prewrite(m.Key, lock)
 	}
 	return store.dbWriter.Write(batch)
@@ -657,6 +658,7 @@ func (store *MVCCStore) Commit(req *requestCtx, keys [][]byte, startTS, commitTS
 		}
 		lock := mvcc.DecodeLock(buf)
 		if lock.StartTS != startTS {
+			log.Errorf("key=%v startTS=%v not equal lock.StartTS=%v commitTS=%v lock=%v", key, startTS, lock.StartTS, commitTS, lock)
 			return ErrReplaced
 		}
 		if lock.Op == uint8(kvrpcpb.Op_PessimisticLock) {
