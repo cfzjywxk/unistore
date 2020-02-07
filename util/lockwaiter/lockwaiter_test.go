@@ -22,7 +22,7 @@ func (t *testLockwaiter) TestLockwaiterBasic(c *C) {
 	mgr := NewManager()
 
 	keyHash := uint64(100)
-	mgr.NewWaiter(1, 2, keyHash, 10)
+	mgr.NewWaiter(1, 2, keyHash, 10, true)
 
 	// basic check queue and waiter
 	q := mgr.waitingQueues[keyHash]
@@ -41,9 +41,9 @@ func (t *testLockwaiter) TestLockwaiterBasic(c *C) {
 	c.Assert(rdyWaiter.KeyHash, Equals, uint64(100))
 
 	// basic wake up test
-	waiter = mgr.NewWaiter(3, 2, keyHash, 10)
+	waiter = mgr.NewWaiter(3, 2, keyHash, 10, true)
 	mgr.WakeUp(2, 222, keysHash)
-	res := <-waiter.ch
+	res := <-waiter.Ch
 	c.Assert(res.CommitTS, Equals, uint64(222))
 	c.Assert(len(q.waiters), Equals, 0)
 	q = mgr.waitingQueues[keyHash]
@@ -51,14 +51,14 @@ func (t *testLockwaiter) TestLockwaiterBasic(c *C) {
 	c.Assert(q, IsNil)
 
 	// basic wake up for deadlock test
-	waiter = mgr.NewWaiter(3, 4, keyHash, 10)
+	waiter = mgr.NewWaiter(3, 4, keyHash, 10, false)
 	resp := &deadlockPb.DeadlockResponse{}
 	resp.Entry.Txn = 3
 	resp.Entry.WaitForTxn = 4
 	resp.Entry.KeyHash = keyHash
 	resp.DeadlockKeyHash = 30192
 	mgr.WakeUpForDeadlock(resp)
-	res = <-waiter.ch
+	res = <-waiter.Ch
 	c.Assert(res.DeadlockResp, NotNil)
 	c.Assert(res.DeadlockResp.Entry.Txn, Equals, uint64(3))
 	c.Assert(res.DeadlockResp.Entry.WaitForTxn, Equals, uint64(4))
@@ -82,7 +82,8 @@ func (t *testLockwaiter) TestLockwaiterConcurrent(c *C) {
 		endWg.Add(1)
 		go func(num uint64) {
 			defer endWg.Done()
-			waiter := mgr.NewWaiter(num, waitForTxn, num*10, 100*time.Millisecond)
+			waiter := mgr.NewWaiter(num, waitForTxn, num*10, 100*time.Millisecond, false)
+			time.Sleep(10 * time.Millisecond)
 			// i == numbers - 1 use CleanUp Waiter and the results will be timeout
 			if num == numbers-1 {
 				mgr.CleanUp(waiter)
@@ -111,7 +112,6 @@ func (t *testLockwaiter) TestLockwaiterConcurrent(c *C) {
 	for i := uint64(0); i < numbers; i++ {
 		keyHashes = keyHashes[:0]
 		if i%2 == 0 {
-			log.Infof("wakeup i=%v", i)
 			mgr.WakeUp(waitForTxn, commitTs, append(keyHashes, i*10))
 		} else {
 			log.Infof("deadlock wakeup i=%v", i)
