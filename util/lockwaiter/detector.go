@@ -10,7 +10,7 @@
 // distributed under the License is distributed on an "AS IS" BASIS,
 // See the License for the specific language governing permissions and
 // limitations under the License.
-package tikv
+package lockwaiter
 
 import (
 	"container/list"
@@ -20,9 +20,21 @@ import (
 	"github.com/ngaut/log"
 )
 
-// Detector detects deadlock.
+// ErrDeadlock is returned when deadlock is detected.
+type ErrDeadlock struct {
+	LockKey         []byte
+	LockTS          uint64
+	DeadlockKeyHash uint64
+}
+
+func (e ErrDeadlock) Error() string {
+	return "deadlock"
+}
+
+// detector detects deadlock.
 type Detector struct {
 	waitForMap       map[uint64]*txnList
+	txnAgeMap        map[uint64]int64
 	lock             sync.Mutex
 	entryTTL         time.Duration
 	totalSize        uint64
@@ -49,10 +61,11 @@ func (p *txnKeyHashPair) isExpired(ttl time.Duration, nowTime time.Time) bool {
 	return false
 }
 
-// NewDetector creates a new Detector.
+// NewDetector creates a new detector.
 func NewDetector(ttl time.Duration, urgentSize uint64, expireInterval time.Duration) *Detector {
 	return &Detector{
 		waitForMap:       map[uint64]*txnList{},
+		txnAgeMap:        map[uint64]int64{},
 		entryTTL:         ttl,
 		lastActiveExpire: time.Now(),
 		urgentSize:       urgentSize,
@@ -62,14 +75,21 @@ func NewDetector(ttl time.Duration, urgentSize uint64, expireInterval time.Durat
 
 // Detect detects deadlock for the sourceTxn on a locked key.
 func (d *Detector) Detect(sourceTxn, waitForTxn, keyHash uint64) *ErrDeadlock {
+	start := time.Now()
+	defer func() {
+		diff := time.Since(start)
+		if diff > time.Millisecond*200 {
+			log.Errorf("[for debug] Detect uses=%v in ms", diff.Milliseconds())
+		}
+	}()
 	d.lock.Lock()
+	defer d.lock.Unlock()
 	nowTime := time.Now()
 	d.activeExpire(nowTime)
 	err := d.doDetect(nowTime, sourceTxn, waitForTxn)
 	if err == nil {
 		d.register(sourceTxn, waitForTxn, keyHash)
 	}
-	d.lock.Unlock()
 	return err
 }
 
@@ -101,6 +121,36 @@ func (d *Detector) doDetect(nowTime time.Time, sourceTxn, waitForTxn uint64) *Er
 	return nil
 }
 
+func (d *Detector) GetTxnAge(txnTs uint64) int64 {
+	d.lock.Lock()
+	defer d.lock.Unlock()
+	return d.getTxnAge(txnTs)
+}
+
+func (d *Detector) getTxnAge(txnTs uint64) int64 {
+	if _, ok := d.txnAgeMap[txnTs]; !ok {
+		d.txnAgeMap[txnTs] = 0
+	}
+	return d.txnAgeMap[txnTs]
+}
+
+func (d *Detector) updateTxnAge(txnTs uint64, delta int64) {
+	oriAge := d.getTxnAge(txnTs)
+	newAge := oriAge + delta
+	if newAge < 0 {
+		newAge = 0
+	}
+	d.txnAgeMap[txnTs] = newAge
+	waitForMap := d.waitForMap[txnTs]
+	//log.Infof("[for debug] updateTxnAge s=%v delta=%v newAge=%v", txnTs, delta, newAge)
+	if waitForMap != nil {
+		for cur := waitForMap.txns.Front(); cur != nil; cur = cur.Next() {
+			valuePair := cur.Value.(*txnKeyHashPair)
+			d.updateTxnAge(valuePair.txn, newAge+1)
+		}
+	}
+}
+
 func (d *Detector) register(sourceTxn, waitForTxn, keyHash uint64) {
 	val := d.waitForMap[sourceTxn]
 	pair := txnKeyHashPair{txn: waitForTxn, keyHash: keyHash, registerTime: time.Now()}
@@ -109,6 +159,7 @@ func (d *Detector) register(sourceTxn, waitForTxn, keyHash uint64) {
 		newList.txns.PushBack(&pair)
 		d.waitForMap[sourceTxn] = newList
 		d.totalSize++
+		d.updateTxnAge(waitForTxn, d.getTxnAge(sourceTxn)+1)
 		return
 	}
 	for cur := val.txns.Front(); cur != nil; cur = cur.Next() {
@@ -119,6 +170,7 @@ func (d *Detector) register(sourceTxn, waitForTxn, keyHash uint64) {
 	}
 	val.txns.PushBack(&pair)
 	d.totalSize++
+	d.updateTxnAge(waitForTxn, d.getTxnAge(sourceTxn)+1)
 }
 
 // CleanUp removes the wait for entry for the transaction.
@@ -126,6 +178,14 @@ func (d *Detector) CleanUp(txn uint64) {
 	d.lock.Lock()
 	if l, ok := d.waitForMap[txn]; ok {
 		d.totalSize -= uint64(l.txns.Len())
+		var nextVal *list.Element
+		for cur := l.txns.Front(); cur != nil; cur = nextVal {
+			nextVal = cur.Next()
+			valuePair := cur.Value.(*txnKeyHashPair)
+			waitForTxn := valuePair.txn
+			//log.Infof("[for debug] CleanUp txn=%v update waitoForTxn=%v delta=%v", txn, waitForTxn, -1*(d.getTxnAge(txn) + 1))
+			d.updateTxnAge(waitForTxn, -1*(d.getTxnAge(txn)+1))
+		}
 	}
 	delete(d.waitForMap, txn)
 	d.lock.Unlock()
@@ -149,6 +209,8 @@ func (d *Detector) CleanUpWaitFor(txn, waitForTxn, keyHash uint64) {
 		if l.txns.Len() == 0 {
 			delete(d.waitForMap, txn)
 		}
+		//log.Infof("[for debug] CleanUpWaitFor txn=%v update waitoForTxn=%v delta=%v", txn, waitForTxn, -1*(d.getTxnAge(txn) + 1))
+		d.updateTxnAge(waitForTxn, -1*(d.getTxnAge(txn)+1))
 	}
 	d.lock.Unlock()
 
