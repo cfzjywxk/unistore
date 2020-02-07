@@ -10,18 +10,49 @@ import (
 	"github.com/pingcap/kvproto/pkg/deadlock"
 )
 
+const (
+	Detect         int = 0
+	CleanUpWaitFor int = 1
+	CleanUp        int = 2
+)
+
+type DetectTask struct {
+	taskType    int
+	startTS     uint64
+	lockTS      uint64
+	keyHash     uint64
+	timeout     time.Duration
+	isFirstLock bool
+	waiter      *Waiter
+}
+
 type Manager struct {
 	mu            sync.Mutex
 	waitingQueues map[uint64]*queue
+	detector      *Detector
+	TaskCh        chan DetectTask
 }
 
 func NewManager() *Manager {
-	return &Manager{
+	entryTTL := 1 * time.Second
+	urgentSize := uint64(100000)
+	exipreInterval := 3600 * time.Second
+	taskChSize := 1024
+	detector := NewDetector(entryTTL, urgentSize, exipreInterval)
+	mgr := &Manager{
 		waitingQueues: map[uint64]*queue{},
+		detector:      detector,
+		TaskCh:        make(chan DetectTask, taskChSize),
 	}
+	workerNums := 2
+	for i := 0; i < workerNums; i++ {
+		go mgr.runDetector()
+	}
+	return mgr
 }
 
 type queue struct {
+	lm      *Manager
 	waiters []*Waiter
 }
 
@@ -30,7 +61,10 @@ type queue struct {
 func (q *queue) getOldestWaiter() (*Waiter, []*Waiter) {
 	// make the waiters in start ts order
 	sort.Slice(q.waiters, func(i, j int) bool {
-		return q.waiters[i].startTS < q.waiters[j].startTS
+		//return q.waiters[i].startTS < q.waiters[j].startTS
+		txnAge1 := q.lm.detector.GetTxnAge(q.waiters[i].startTS)
+		txnAge2 := q.lm.detector.GetTxnAge(q.waiters[j].startTS)
+		return txnAge1 > txnAge2
 	})
 	oldestWaiter := q.waiters[0]
 	remainWaiter := q.waiters[1:]
@@ -53,7 +87,7 @@ func (q *queue) removeWaiter(w *Waiter) {
 type Waiter struct {
 	deadlineTime  time.Time
 	timer         *time.Timer
-	ch            chan WaitResult
+	Ch            chan WaitResult
 	startTS       uint64
 	LockTS        uint64
 	KeyHash       uint64
@@ -84,7 +118,7 @@ func (w *Waiter) Wait() WaitResult {
 				return WaitResult{WakeupSleepTime: WakeupDelayTimeout, CommitTS: w.CommitTs}
 			}
 			return WaitResult{WakeupSleepTime: WaitTimeout}
-		case result := <-w.ch:
+		case result := <-w.Ch:
 			if result.WakeupSleepTime == WakeupDelayTimeout {
 				w.CommitTs = result.CommitTS
 				w.wakeupDelayed = true
@@ -102,20 +136,74 @@ func (w *Waiter) Wait() WaitResult {
 }
 
 func (w *Waiter) DrainCh() {
-	for len(w.ch) > 0 {
-		<-w.ch
+	for len(w.Ch) > 0 {
+		<-w.Ch
+	}
+}
+
+// convertErrToResp converts `ErrDeadlock` to `DeadlockResponse` proto type
+func convertErrToResp(errDeadlock *ErrDeadlock, txnTs, waitForTxnTs, keyHash uint64) *deadlock.DeadlockResponse {
+	entry := deadlock.WaitForEntry{}
+	entry.Txn = txnTs
+	entry.WaitForTxn = waitForTxnTs
+	entry.KeyHash = keyHash
+	resp := &deadlock.DeadlockResponse{}
+	resp.Entry = entry
+	resp.DeadlockKeyHash = errDeadlock.DeadlockKeyHash
+	return resp
+}
+
+func (lw *Manager) DetectorDetect(startTS, lockTS, keyHash uint64, waiter *Waiter) {
+	lw.TaskCh <- DetectTask{taskType: Detect, startTS: startTS,
+		lockTS: lockTS, keyHash: keyHash, waiter: waiter}
+	if len(lw.TaskCh) > 1000 {
+		log.Warnf("task queue near full")
+	}
+}
+
+func (lw *Manager) DetectorCleanupWaitFor(startTS, lockTS, keyHash uint64) {
+	lw.TaskCh <- DetectTask{taskType: CleanUpWaitFor, startTS: startTS, lockTS: lockTS, keyHash: keyHash}
+	if len(lw.TaskCh) > 1000 {
+		log.Warnf("task queue near full")
+	}
+}
+
+func (lw *Manager) DetectorCleanup(startTS uint64) {
+	lw.TaskCh <- DetectTask{taskType: CleanUp, startTS: startTS}
+	if len(lw.TaskCh) > 1000 {
+		log.Warnf("task queue near full")
+	}
+}
+
+// runDetector runs background deadlock detector service
+func (lw *Manager) runDetector() {
+	for {
+		task := <-lw.TaskCh
+		switch task.taskType {
+		case Detect:
+			err := lw.detector.Detect(task.startTS, task.lockTS, task.keyHash)
+			if err != nil {
+				resp := convertErrToResp(err, task.startTS, task.lockTS, task.keyHash)
+				task.waiter.Ch <- WaitResult{DeadlockResp: resp}
+			}
+		case CleanUpWaitFor:
+			lw.detector.CleanUpWaitFor(task.startTS, task.lockTS, task.keyHash)
+		case CleanUp:
+			lw.detector.CleanUp(task.startTS)
+		}
 	}
 }
 
 // Wait waits on a lock until waked by others or timeout.
-func (lw *Manager) NewWaiter(startTS, lockTS, keyHash uint64, timeout time.Duration) *Waiter {
+func (lw *Manager) NewWaiter(startTS, lockTS, keyHash uint64, timeout time.Duration, isFirstLock bool) *Waiter {
 	// allocate memory before hold the lock.
 	q := new(queue)
+	q.lm = lw
 	q.waiters = make([]*Waiter, 0, 8)
 	waiter := &Waiter{
 		deadlineTime: time.Now().Add(timeout),
 		timer:        time.NewTimer(timeout),
-		ch:           make(chan WaitResult, 32),
+		Ch:           make(chan WaitResult, 32),
 		startTS:      startTS,
 		LockTS:       lockTS,
 		KeyHash:      keyHash,
@@ -128,6 +216,7 @@ func (lw *Manager) NewWaiter(startTS, lockTS, keyHash uint64, timeout time.Durat
 		lw.waitingQueues[keyHash] = q
 	}
 	lw.mu.Unlock()
+	lw.DetectorDetect(startTS, lockTS, keyHash, waiter)
 	return waiter
 }
 
@@ -154,18 +243,17 @@ func (lw *Manager) WakeUp(txn, commitTS uint64, keyHashes []uint64) {
 	if len(waiters) > 0 {
 		for _, w := range waiters {
 			select {
-			case w.ch <- WaitResult{WakeupSleepTime: WakeUpThisWaiter, CommitTS: commitTS}:
+			case w.Ch <- WaitResult{WakeupSleepTime: WakeUpThisWaiter, CommitTS: commitTS}:
 			default:
 			}
 		}
-		log.Info("wakeup", len(waiters), "txns blocked by txn", txn, " keyHashes=", keyHashes)
 	}
 	// wake up delay waiters, this will not remove waiter from queue
 	if len(wakeUpDelayWaiters) > 0 {
 		for _, w := range wakeUpDelayWaiters {
 			w.LockTS = txn
 			select {
-			case w.ch <- WaitResult{WakeupSleepTime: WakeupDelayTimeout, CommitTS: commitTS}:
+			case w.Ch <- WaitResult{WakeupSleepTime: WakeupDelayTimeout, CommitTS: commitTS}:
 			default:
 			}
 		}
@@ -211,7 +299,7 @@ func (lw *Manager) WakeUpForDeadlock(resp *deadlock.DeadlockResponse) {
 	}
 	lw.mu.Unlock()
 	if waiter != nil {
-		waiter.ch <- WaitResult{DeadlockResp: resp}
+		waiter.Ch <- WaitResult{DeadlockResp: resp}
 		log.Infof("wakeup txn=%v blocked by txn=%v because of deadlock, keyHash=%v, deadlockKeyHash=%v",
 			resp.Entry.Txn, resp.Entry.WaitForTxn, resp.Entry.KeyHash, resp.DeadlockKeyHash)
 	}

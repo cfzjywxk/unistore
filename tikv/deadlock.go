@@ -20,7 +20,7 @@ const (
 )
 
 type DetectorServer struct {
-	Detector *Detector
+	Detector *lockwaiter.Detector
 	role     int32
 }
 
@@ -171,7 +171,7 @@ func (dt *DetectorClient) Detect(txnTs uint64, waitForTxnTs uint64, keyHash uint
 }
 
 // convertErrToResp converts `ErrDeadlock` to `DeadlockResponse` proto type
-func convertErrToResp(errDeadlock *ErrDeadlock, txnTs, waitForTxnTs, keyHash uint64) *deadlockPb.DeadlockResponse {
+func convertErrToResp(errDeadlock *lockwaiter.ErrDeadlock, txnTs, waitForTxnTs, keyHash uint64) *deadlockPb.DeadlockResponse {
 	entry := deadlockPb.WaitForEntry{}
 	entry.Txn = txnTs
 	entry.WaitForTxn = waitForTxnTs
@@ -188,7 +188,7 @@ func NewDetectorServer() *DetectorServer {
 	urgentSize := uint64(100000)
 	exipreInterval := 3600 * time.Second
 	svr := &DetectorServer{
-		Detector: NewDetector(entryTTL, urgentSize, exipreInterval),
+		Detector: lockwaiter.NewDetector(entryTTL, urgentSize, exipreInterval),
 	}
 	return svr
 }

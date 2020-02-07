@@ -10,19 +10,14 @@
 // distributed under the License is distributed on an "AS IS" BASIS,
 // See the License for the specific language governing permissions and
 // limitations under the License.
-package tikv
+package lockwaiter
 
 import (
 	"fmt"
-	"testing"
 	"time"
 
 	. "github.com/pingcap/check"
 )
-
-func TestT(t *testing.T) {
-	TestingT(t)
-}
 
 var _ = Suite(&testDeadlockSuite{})
 
@@ -35,43 +30,53 @@ func (s *testDeadlockSuite) TestDeadlock(c *C) {
 	detector := NewDetector(ttl, urgentSize, expireInterval)
 	err := detector.Detect(1, 2, 100)
 	c.Assert(err, IsNil)
+	c.Assert(detector.GetTxnAge(2), Equals, int64(1))
 	c.Assert(detector.totalSize, Equals, uint64(1))
 	err = detector.Detect(2, 3, 200)
 	c.Assert(err, IsNil)
+	c.Assert(detector.GetTxnAge(3), Equals, int64(2))
 	c.Assert(detector.totalSize, Equals, uint64(2))
+	err = detector.Detect(4, 3, 200)
+	c.Assert(err, IsNil)
+	c.Assert(detector.GetTxnAge(3), Equals, int64(3))
+	c.Assert(detector.GetTxnAge(4), Equals, int64(0))
+
 	err = detector.Detect(3, 1, 300)
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, fmt.Sprintf("deadlock"))
-	c.Assert(detector.totalSize, Equals, uint64(2))
+	c.Assert(detector.totalSize, Equals, uint64(3))
+	c.Assert(detector.GetTxnAge(3), Equals, int64(3))
 	detector.CleanUp(2)
 	list2 := detector.waitForMap[2]
 	c.Assert(list2, IsNil)
-	c.Assert(detector.totalSize, Equals, uint64(1))
+	c.Assert(detector.totalSize, Equals, uint64(2))
+	c.Assert(detector.GetTxnAge(2), Equals, int64(1))
+	c.Assert(detector.GetTxnAge(3), Equals, int64(1))
 
 	// After cycle is broken, no deadlock now.
 	err = detector.Detect(3, 1, 300)
 	c.Assert(err, IsNil)
 	list3 := detector.waitForMap[3]
 	c.Assert(list3.txns.Len(), Equals, 1)
-	c.Assert(detector.totalSize, Equals, uint64(2))
+	c.Assert(detector.totalSize, Equals, uint64(3))
 
 	// Different keyHash grows the list.
 	err = detector.Detect(3, 1, 400)
 	c.Assert(err, IsNil)
 	c.Assert(list3.txns.Len(), Equals, 2)
-	c.Assert(detector.totalSize, Equals, uint64(3))
+	c.Assert(detector.totalSize, Equals, uint64(4))
 
 	// Same waitFor and key hash doesn't grow the list.
 	err = detector.Detect(3, 1, 400)
 	c.Assert(err, IsNil)
 	c.Assert(list3.txns.Len(), Equals, 2)
-	c.Assert(detector.totalSize, Equals, uint64(3))
+	c.Assert(detector.totalSize, Equals, uint64(4))
 
 	detector.CleanUpWaitFor(3, 1, 300)
 	c.Assert(list3.txns.Len(), Equals, 1)
-	c.Assert(detector.totalSize, Equals, uint64(2))
+	c.Assert(detector.totalSize, Equals, uint64(3))
 	detector.CleanUpWaitFor(3, 1, 400)
-	c.Assert(detector.totalSize, Equals, uint64(1))
+	c.Assert(detector.totalSize, Equals, uint64(2))
 	list3 = detector.waitForMap[3]
 	c.Assert(list3, IsNil)
 

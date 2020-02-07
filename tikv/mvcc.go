@@ -276,8 +276,9 @@ func (store *MVCCStore) PessimisticRollback(reqCtx *requestCtx, req *kvrpcpb.Pes
 	if batch != nil {
 		err = store.dbWriter.Write(batch)
 	}
+	store.lockWaiterManager.DetectorCleanup(startTS)
 	store.lockWaiterManager.WakeUp(startTS, 0, hashVals)
-	store.DeadlockDetectCli.CleanUp(startTS)
+	//store.DeadlockDetectCli.CleanUp(startTS)
 	return err
 }
 
@@ -382,11 +383,13 @@ func (store *MVCCStore) handleCheckPessimisticErr(startTS uint64, err error, isF
 	if lock, ok := err.(*ErrLocked); ok {
 		keyHash := farm.Fingerprint64(lock.Key)
 		waitTimeDuration := store.normalizeWaitTime(lockWaitTime)
-		log.Infof("%d blocked by %d on key %d", startTS, lock.StartTS, keyHash)
-		waiter := store.lockWaiterManager.NewWaiter(startTS, lock.StartTS, keyHash, waitTimeDuration)
-		if !isFirstLock {
-			store.DeadlockDetectCli.Detect(startTS, lock.StartTS, keyHash)
-		}
+		log.Debugf("%d blocked by %d on key %d", startTS, lock.StartTS, keyHash)
+		waiter := store.lockWaiterManager.NewWaiter(startTS, lock.StartTS, keyHash, waitTimeDuration, isFirstLock)
+		/*
+			if !isFirstLock {
+				store.DeadlockDetectCli.Detect(startTS, lock.StartTS, keyHash)
+			}
+		*/
 		return waiter, err
 	}
 	return nil, err
@@ -685,10 +688,10 @@ func (store *MVCCStore) Commit(req *requestCtx, keys [][]byte, startTS, commitTS
 	}
 	atomic.AddInt64(&regCtx.diff, int64(tmpDiff))
 	err := store.dbWriter.Write(batch)
-	store.lockWaiterManager.WakeUp(startTS, commitTS, hashVals)
 	if isPessimisticTxn {
-		store.DeadlockDetectCli.CleanUp(startTS)
+		store.lockWaiterManager.DetectorCleanup(startTS)
 	}
+	store.lockWaiterManager.WakeUp(startTS, commitTS, hashVals)
 	return err
 }
 
@@ -754,7 +757,8 @@ func (store *MVCCStore) Rollback(reqCtx *requestCtx, keys [][]byte, startTS uint
 			return err
 		}
 	}
-	store.DeadlockDetectCli.CleanUp(startTS)
+	//store.DeadlockDetectCli.CleanUp(startTS)
+	store.lockWaiterManager.DetectorCleanup(startTS)
 	err := store.dbWriter.Write(batch)
 	return errors.Trace(err)
 }

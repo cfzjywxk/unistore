@@ -198,15 +198,16 @@ func (svr *Server) KvPessimisticLock(ctx context.Context, req *kvrpcpb.Pessimist
 		return resp, nil
 	}
 	result := waiter.Wait()
-	svr.mvccStore.DeadlockDetectCli.CleanUpWaitFor(req.StartVersion, waiter.LockTS, waiter.KeyHash)
+	//svr.mvccStore.DeadlockDetectCli.CleanUpWaitFor(req.StartVersion, waiter.LockTS, waiter.KeyHash)
+	svr.mvccStore.lockWaiterManager.DetectorCleanupWaitFor(req.StartVersion, waiter.LockTS, waiter.KeyHash)
 	svr.mvccStore.lockWaiterManager.CleanUp(waiter)
 	if result.WakeupSleepTime == lockwaiter.WaitTimeout {
 		return resp, nil
 	}
 	if result.DeadlockResp != nil {
-		log.Errorf("deadlock found for entry=%v", result.DeadlockResp.Entry)
+		log.Warnf("deadlock found for entry=%v", result.DeadlockResp.Entry)
 		errLocked := err.(*ErrLocked)
-		deadlockErr := &ErrDeadlock{
+		deadlockErr := &lockwaiter.ErrDeadlock{
 			LockKey:         errLocked.Key,
 			LockTS:          errLocked.StartTS,
 			DeadlockKeyHash: result.DeadlockResp.DeadlockKeyHash,
@@ -606,16 +607,18 @@ func (svr *Server) Detect(stream deadlockPb.Deadlock_DetectServer) error {
 		}
 		switch req.Tp {
 		case deadlockPb.DeadlockRequestType_Detect:
-			err := svr.mvccStore.DeadlockDetectSvr.Detector.Detect(req.Entry.Txn, req.Entry.WaitForTxn, req.Entry.KeyHash)
-			if err != nil {
-				resp := convertErrToResp(err, req.Entry.Txn,
-					req.Entry.WaitForTxn, req.Entry.KeyHash)
-				sendErr := stream.Send(resp)
-				if sendErr != nil {
-					log.Errorf("send deadlock response failed, error=%v", sendErr)
-					break
+			/*
+				err := svr.mvccStore.DeadlockDetectSvr.detector.Detect(req.Entry.Txn, req.Entry.WaitForTxn, req.Entry.KeyHash)
+				if err != nil {
+					resp := convertErrToResp(err, req.Entry.Txn,
+						req.Entry.WaitForTxn, req.Entry.KeyHash)
+					sendErr := stream.Send(resp)
+					if sendErr != nil {
+						log.Errorf("send deadlock response failed, error=%v", sendErr)
+						break
+					}
 				}
-			}
+			*/
 		case deadlockPb.DeadlockRequestType_CleanUpWaitFor:
 			svr.mvccStore.DeadlockDetectSvr.Detector.CleanUpWaitFor(req.Entry.Txn, req.Entry.WaitForTxn, req.Entry.KeyHash)
 		case deadlockPb.DeadlockRequestType_CleanUp:
@@ -660,7 +663,7 @@ func convertToKeyError(err error) *kvrpcpb.KeyError {
 				Key:              x.Key,
 			},
 		}
-	case *ErrDeadlock:
+	case *lockwaiter.ErrDeadlock:
 		return &kvrpcpb.KeyError{
 			Deadlock: &kvrpcpb.Deadlock{
 				LockKey:         x.LockKey,
