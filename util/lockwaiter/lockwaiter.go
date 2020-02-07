@@ -247,7 +247,6 @@ func (lw *Manager) WakeUp(txn, commitTS uint64, keyHashes []uint64) {
 			default:
 			}
 		}
-		log.Debugf("wakeup", len(waiters), "txns blocked by txn", txn, " keyHashes=", keyHashes)
 	}
 	// wake up delay waiters, this will not remove waiter from queue
 	if len(wakeUpDelayWaiters) > 0 {
