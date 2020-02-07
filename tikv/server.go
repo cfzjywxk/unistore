@@ -641,6 +641,7 @@ func convertToKeyError(err error) *kvrpcpb.KeyError {
 				PrimaryLock: x.Primary,
 				LockVersion: x.StartTS,
 				LockTtl:     x.TTL,
+				LockType:    kvrpcpb.Op(x.LockType),
 			},
 		}
 	case ErrRetryable:
