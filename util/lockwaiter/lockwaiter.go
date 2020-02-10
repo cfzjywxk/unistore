@@ -34,7 +34,7 @@ type Manager struct {
 }
 
 func NewManager() *Manager {
-	entryTTL := 1 * time.Second
+	entryTTL := 3 * time.Second
 	urgentSize := uint64(100000)
 	exipreInterval := 3600 * time.Second
 	taskChSize := 1024
@@ -153,9 +153,9 @@ func convertErrToResp(errDeadlock *ErrDeadlock, txnTs, waitForTxnTs, keyHash uin
 	return resp
 }
 
-func (lw *Manager) DetectorDetect(startTS, lockTS, keyHash uint64, waiter *Waiter) {
+func (lw *Manager) DetectorDetect(startTS, lockTS, keyHash uint64, isFirstLock bool, waiter *Waiter) {
 	lw.TaskCh <- DetectTask{taskType: Detect, startTS: startTS,
-		lockTS: lockTS, keyHash: keyHash, waiter: waiter}
+		lockTS: lockTS, keyHash: keyHash, isFirstLock: isFirstLock, waiter: waiter}
 	if len(lw.TaskCh) > 1000 {
 		log.Errorf("task queue near full")
 	}
@@ -181,10 +181,13 @@ func (lw *Manager) runDetector() {
 		task := <-lw.TaskCh
 		switch task.taskType {
 		case Detect:
-			err := lw.detector.Detect(task.startTS, task.lockTS, task.keyHash)
-			if err != nil {
-				resp := convertErrToResp(err, task.startTS, task.lockTS, task.keyHash)
-				task.waiter.Ch <- WaitResult{DeadlockResp: resp}
+			if task.isFirstLock {
+			} else {
+				err := lw.detector.Detect(task.startTS, task.lockTS, task.keyHash)
+				if err != nil {
+					resp := convertErrToResp(err, task.startTS, task.lockTS, task.keyHash)
+					task.waiter.Ch <- WaitResult{DeadlockResp: resp}
+				}
 			}
 		case CleanUpWaitFor:
 			lw.detector.CleanUpWaitFor(task.startTS, task.lockTS, task.keyHash)
@@ -216,7 +219,7 @@ func (lw *Manager) NewWaiter(startTS, lockTS, keyHash uint64, timeout time.Durat
 		lw.waitingQueues[keyHash] = q
 	}
 	lw.mu.Unlock()
-	lw.DetectorDetect(startTS, lockTS, keyHash, waiter)
+	lw.DetectorDetect(startTS, lockTS, keyHash, isFirstLock, waiter)
 	return waiter
 }
 

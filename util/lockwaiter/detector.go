@@ -75,16 +75,15 @@ func NewDetector(ttl time.Duration, urgentSize uint64, expireInterval time.Durat
 
 // Detect detects deadlock for the sourceTxn on a locked key.
 func (d *Detector) Detect(sourceTxn, waitForTxn, keyHash uint64) *ErrDeadlock {
-	start := time.Now()
+	nowTime := time.Now()
 	defer func() {
-		diff := time.Since(start)
+		diff := time.Since(nowTime)
 		if diff > time.Millisecond*100 {
 			log.Errorf("[for debug] Detect uses=%v in ms", diff.Milliseconds())
 		}
 	}()
 	d.lock.Lock()
 	defer d.lock.Unlock()
-	nowTime := time.Now()
 	d.activeExpire(nowTime)
 	err := d.doDetect(nowTime, sourceTxn, waitForTxn)
 	if err == nil {
@@ -149,6 +148,12 @@ func (d *Detector) updateTxnAge(txnTs uint64, delta int64) {
 			d.updateTxnAge(valuePair.txn, newAge+1)
 		}
 	}
+}
+
+func (d *Detector) Register(sourceTxn, waitForTxn, keyHash uint64) {
+	d.lock.Lock()
+	defer d.lock.Unlock()
+	d.register(sourceTxn, waitForTxn, keyHash)
 }
 
 func (d *Detector) register(sourceTxn, waitForTxn, keyHash uint64) {
