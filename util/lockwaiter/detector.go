@@ -78,7 +78,7 @@ func (d *Detector) Detect(sourceTxn, waitForTxn, keyHash uint64) *ErrDeadlock {
 	start := time.Now()
 	defer func() {
 		diff := time.Since(start)
-		if diff > time.Millisecond*200 {
+		if diff > time.Millisecond*100 {
 			log.Errorf("[for debug] Detect uses=%v in ms", diff.Milliseconds())
 		}
 	}()

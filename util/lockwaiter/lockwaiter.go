@@ -44,7 +44,7 @@ func NewManager() *Manager {
 		detector:      detector,
 		TaskCh:        make(chan DetectTask, taskChSize),
 	}
-	workerNums := 2
+	workerNums := 8
 	for i := 0; i < workerNums; i++ {
 		go mgr.runDetector()
 	}
@@ -157,21 +157,21 @@ func (lw *Manager) DetectorDetect(startTS, lockTS, keyHash uint64, waiter *Waite
 	lw.TaskCh <- DetectTask{taskType: Detect, startTS: startTS,
 		lockTS: lockTS, keyHash: keyHash, waiter: waiter}
 	if len(lw.TaskCh) > 1000 {
-		log.Warnf("task queue near full")
+		log.Errorf("task queue near full")
 	}
 }
 
 func (lw *Manager) DetectorCleanupWaitFor(startTS, lockTS, keyHash uint64) {
 	lw.TaskCh <- DetectTask{taskType: CleanUpWaitFor, startTS: startTS, lockTS: lockTS, keyHash: keyHash}
 	if len(lw.TaskCh) > 1000 {
-		log.Warnf("task queue near full")
+		log.Errorf("task queue near full")
 	}
 }
 
 func (lw *Manager) DetectorCleanup(startTS uint64) {
 	lw.TaskCh <- DetectTask{taskType: CleanUp, startTS: startTS}
 	if len(lw.TaskCh) > 1000 {
-		log.Warnf("task queue near full")
+		log.Errorf("task queue near full")
 	}
 }
 
