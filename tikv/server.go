@@ -204,7 +204,7 @@ func (svr *Server) KvPessimisticLock(ctx context.Context, req *kvrpcpb.Pessimist
 		return resp, nil
 	}
 	if result.DeadlockResp != nil {
-		log.Errorf("deadlock found for entry=%v", result.DeadlockResp.Entry)
+		log.Infof("deadlock found for entry=%v", result.DeadlockResp.Entry)
 		errLocked := err.(*ErrLocked)
 		deadlockErr := &ErrDeadlock{
 			LockKey:         errLocked.Key,
