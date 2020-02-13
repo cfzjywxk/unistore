@@ -224,6 +224,7 @@ func (svr *Server) KvPessimisticLock(ctx context.Context, req *kvrpcpb.Pessimist
 		ConflictCommitTS: conflictCommitTS,
 	}
 	resp.Errors, _ = convertToPBErrors(err)
+	log.Debugf("[for debug] req.StartVersion, req.ForUpdateTs, err=%v", req.StartVersion, req.ForUpdateTs, err)
 	return resp, nil
 }
 

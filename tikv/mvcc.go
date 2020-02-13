@@ -309,6 +309,11 @@ func (store *MVCCStore) TxnHeartBeat(reqCtx *requestCtx, req *kvrpcpb.TxnHeartBe
 // CheckTxnStatus returns the txn status based on request primary key txn info
 func (store *MVCCStore) CheckTxnStatus(reqCtx *requestCtx,
 	req *kvrpcpb.CheckTxnStatusRequest) (ttl, commitTS uint64, action kvrpcpb.Action, err error) {
+	defer func() {
+		log.Debugf("[for debug] CheckTxnStatus results lock.StartTS=%v, req.CallerStartTs"+
+			"res ttl=%v res commitTS=%v res action, err=%v", req.LockTs, req.CallerStartTs,
+			ttl, commitTS, action, err)
+	}()
 	hashVals := keysToHashVals(req.PrimaryKey)
 	regCtx := reqCtx.regCtx
 	regCtx.AcquireLatches(hashVals)
@@ -317,6 +322,11 @@ func (store *MVCCStore) CheckTxnStatus(reqCtx *requestCtx,
 	batch := store.dbWriter.NewWriteBatch(req.LockTs, 0, reqCtx.rpcCtx)
 	if lock != nil && lock.StartTS == req.LockTs {
 		// If the lock has already outdated, clean up it.
+		log.Debugf("[for debug] CheckTxnStatusRequest lock.StartTS=%v lock.TTL=%v, lock.MinCommitTS=%v, req.CurrentTs=%v"+
+			"left=%v, right=%v",
+			lock.StartTS, lock.TTL, lock.MinCommitTS, req.CurrentTs,
+			uint64(oracle.ExtractPhysical(lock.StartTS))+uint64(lock.TTL),
+			uint64(oracle.ExtractPhysical(req.CurrentTs)))
 		if uint64(oracle.ExtractPhysical(lock.StartTS))+uint64(lock.TTL) < uint64(oracle.ExtractPhysical(req.CurrentTs)) {
 			batch.Rollback(req.PrimaryKey, true)
 			return 0, 0, kvrpcpb.Action_TTLExpireRollback, store.dbWriter.Write(batch)
