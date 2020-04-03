@@ -168,10 +168,10 @@ func (lw *Manager) WakeUp(txn, commitTS uint64, keyHashes []uint64) {
 		for _, w := range waiters {
 			select {
 			case w.ch <- WaitResult{WakeupSleepTime: WakeUpThisWaiter, CommitTS: commitTS}:
+				log.Info("[for debug] txn=%v commitTS=%v wakeup waitTxn=%v wait for keyHash", txn, commitTS, w.startTS, w.KeyHash)
 			default:
 			}
 		}
-		log.Debug("wakeup", len(waiters), "txns blocked by txn", txn, " keyHashes=", keyHashes)
 	}
 	// wake up delay waiters, this will not remove waiter from queue
 	if len(wakeUpDelayWaiters) > 0 {
@@ -179,6 +179,7 @@ func (lw *Manager) WakeUp(txn, commitTS uint64, keyHashes []uint64) {
 			w.LockTS = txn
 			select {
 			case w.ch <- WaitResult{WakeupSleepTime: WakeupDelayTimeout, CommitTS: commitTS}:
+				log.Info("[for debug] txn=%v commitTS=%v change waitTxn=%v wait for keyHash delay time=%v", txn, commitTS, w.startTS, w.KeyHash, WakeupDelayTimeout)
 			default:
 			}
 		}
