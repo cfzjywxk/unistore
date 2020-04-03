@@ -179,7 +179,7 @@ func (lw *Manager) WakeUp(txn, commitTS uint64, keyHashes []uint64) {
 			w.LockTS = txn
 			select {
 			case w.ch <- WaitResult{WakeupSleepTime: WakeupDelayTimeout, CommitTS: commitTS}:
-				log.Infof("[for debug] txn=%v commitTS=%v change waitTxn=%v wait for keyHash delay time=%v", txn, commitTS, w.startTS, w.KeyHash, WakeupDelayTimeout)
+				log.Infof("[for debug] txn=%d commitTS=%d change waitTxn=%d wait for keyHash=%v delay timeout", txn, commitTS, w.startTS, w.KeyHash)
 			default:
 			}
 		}
